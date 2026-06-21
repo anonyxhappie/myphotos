@@ -9,9 +9,10 @@ import AddPhotosToAlbumModal from './AddPhotosToAlbumModal';
 
 interface AlbumDetailProps {
   onPhotoClick: (item: MediaItemSummary, list: MediaItemSummary[]) => void;
+  onTotalCountChange: (count: number, size: number) => void;
 }
 
-export default function AlbumDetail({ onPhotoClick }: AlbumDetailProps) {
+export default function AlbumDetail({ onPhotoClick, onTotalCountChange }: AlbumDetailProps) {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [album, setAlbum] = useState<Album | null>(null);
@@ -62,7 +63,7 @@ export default function AlbumDetail({ onPhotoClick }: AlbumDetailProps) {
           searchQuery="" 
           albumId={id}
           onPhotoClick={onPhotoClick} 
-          onTotalCountChange={() => {}} 
+          onTotalCountChange={onTotalCountChange} 
         />
       </div>
 

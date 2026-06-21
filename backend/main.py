@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from backend.config import settings
 from backend.db.engine import get_db, log_audit_entry
-from backend.db.models import Base, MediaItem, Volume
+from backend.db.models import Base, MediaItem, Volume, Tag, Person, Face
 from backend.db.engine import engine
 from backend.schemas import (
     MediaItemDetail,
@@ -38,6 +38,8 @@ from backend.schemas import (
     VolumeResponse,
     AuditLogResponse,
     BulkDeleteRequest,
+    PersonResponse,
+    PersonUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,6 +150,7 @@ def get_timeline(
     favorites_only: bool = Query(False),
     videos_only: bool = Query(False),
     locked_only: bool = Query(False),
+    dir_id: Optional[str] = Query(None),
     sort: str = Query("date_taken"),
     db: Session = Depends(get_db),
 ) -> TimelineResponse:
@@ -170,8 +173,23 @@ def get_timeline(
     if videos_only:
         query = query.where(MediaItem.mime_type.like("video/%"))
 
+    if dir_id:
+        from backend.db.models import SyncedDirectory
+        import os
+        directory = db.get(SyncedDirectory, dir_id)
+        if directory:
+            path_prefix = directory.path
+            if not path_prefix.endswith(os.sep):
+                path_prefix += os.sep
+            query = query.where(MediaItem.original_path.like(path_prefix + "%"))
+        else:
+            query = query.where(MediaItem.id == "not-found")
+
     # Total count (respecting filters)
-    total = db.scalar(select(func.count(MediaItem.id)).select_from(query.subquery()))
+    count_query = query.with_only_columns(func.count(MediaItem.id)).order_by(None)
+    total = db.scalar(count_query)
+    size_query = query.with_only_columns(func.sum(MediaItem.file_size_bytes)).order_by(None)
+    total_size = db.scalar(size_query) or 0
 
     # Order By
     sort_col = (
@@ -241,6 +259,7 @@ def get_timeline(
         items=summaries,
         next_cursor=next_cursor,
         total_count=total or 0,
+        total_size_bytes=total_size,
     )
 
 
@@ -288,6 +307,7 @@ def get_media_detail(media_id: str, db: Session = Depends(get_db)) -> MediaItemD
         original_available=original_available,
         volume_label=volume_label,
         offline_message=offline_message,
+        tags=item.tags,
     )
 
 @app.post("/api/media/{media_id}/favorite", response_model=MediaItemSummary)
@@ -663,6 +683,19 @@ def retry_scan(task_id: str) -> ScanStatusResponse:
     return _requeue_scan(task_id, retry=True)
 
 
+@app.post("/api/scan/resync_all", response_model=list[ScanEnqueuedResponse])
+def resync_all(db: Session = Depends(get_db)):
+    """Trigger background scans for all actively monitored directories."""
+    from backend.tasks import task_scan_directory
+    from backend.db.models import SyncedDirectory
+    
+    dirs = db.query(SyncedDirectory).filter(SyncedDirectory.is_active == True).all()
+    responses = []
+    for directory in dirs:
+        result = task_scan_directory.delay(directory.path, True)
+        responses.append(ScanEnqueuedResponse(task_id=result.id, message=f"Scan started for {directory.path}"))
+    return responses
+
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  Search & ML Endpoints                                                  ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -675,24 +708,60 @@ def start_ml_pipeline() -> ScanEnqueuedResponse:
     result = task_process_ml_pipeline.delay()
     return ScanEnqueuedResponse(task_id=result.id, message="ML pipeline started")
 
+@app.post("/api/ml/retrain", response_model=ScanEnqueuedResponse)
+def retrain_ml(db: Session = Depends(get_db)):
+    """Reset ML flags and re-run ML pipeline for all items."""
+    from backend.tasks import task_process_ml_pipeline
+    from backend.db.models import MediaItem, AuditLog
+    
+    db.query(MediaItem).update({"faces_scanned": False, "clip_embedded": False})
+    db.add(AuditLog(
+        action="retrain_ml",
+        level="warning",
+        details="Triggered AI retraining for all media items."
+    ))
+    db.commit()
+    
+    result = task_process_ml_pipeline.delay()
+    return ScanEnqueuedResponse(task_id=result.id, message="ML retraining started")
+
 @app.get("/api/search", response_model=TimelineResponse)
 def search_media(q: str = Query(..., description="Search query"), db: Session = Depends(get_db)) -> TimelineResponse:
     """Search for media items semantically or by metadata."""
     from backend.services.ml import search_semantic
     
-    # Get media IDs from LanceDB
-    media_ids = search_semantic(q, limit=50)
+    # 1. Get media IDs from LanceDB (Semantic search)
+    semantic_media_ids = search_semantic(q, limit=50)
     
-    if not media_ids:
-        return TimelineResponse(items=[], next_cursor=None, total_count=0)
+    # 2. Get media IDs from SQL database matching explicitly generated tags
+    tag_media_rows = db.execute(
+        select(MediaItem.id)
+        .join(MediaItem.tags)
+        .where(Tag.name.ilike(f"%{q}%"))
+        .limit(50)
+    ).scalars().all()
+    
+    # Combine sets of IDs
+    all_media_ids = list(set(semantic_media_ids + list(tag_media_rows)))
+    
+    if not all_media_ids:
+        return TimelineResponse(items=[], next_cursor=None, total_count=0, total_size_bytes=0)
         
     # Fetch metadata for those IDs
-    query = select(MediaItem).where(MediaItem.id.in_(media_ids))
+    query = select(MediaItem).where(MediaItem.id.in_(all_media_ids))
     rows = db.execute(query).scalars().all()
     
-    # Sort them in the order of the search results (which are sorted by similarity)
+    # Sort them: first the semantic results in order, then any SQL-only matches
     items_by_id = {item.id: item for item in rows}
-    items = [items_by_id[mid] for mid in media_ids if mid in items_by_id]
+    items = []
+    
+    for mid in semantic_media_ids:
+        if mid in items_by_id:
+            items.append(items_by_id[mid])
+            del items_by_id[mid]
+            
+    for item in items_by_id.values():
+        items.append(item)
     
     # Build volume online lookup
     volume_ids = {item.volume_id for item in items if item.volume_id}
@@ -723,10 +792,13 @@ def search_media(q: str = Query(..., description="Search query"), db: Session = 
             )
         )
 
+    total_size = sum(item.file_size_bytes or 0 for item in items)
+
     return TimelineResponse(
         items=summaries,
         next_cursor=None,
         total_count=len(summaries),
+        total_size_bytes=total_size,
     )
 
 
@@ -742,11 +814,13 @@ def health_check(db: Session = Depends(get_db)) -> dict:
     row = db.execute(text("SELECT 1")).scalar()
     total_media = db.scalar(select(func.count(MediaItem.id)))
     total_volumes = db.scalar(select(func.count(Volume.id)))
+    total_size = db.scalar(select(func.sum(MediaItem.file_size_bytes))) or 0
     return {
         "status": "healthy",
         "db_connected": row == 1,
         "total_media_items": total_media,
         "total_volumes": total_volumes,
+        "total_size_bytes": total_size,
     }
 
 
@@ -786,6 +860,11 @@ def get_synced_directories(db: Session = Depends(get_db)):
             MediaItem.original_path.like(path_prefix + "%")
         ).count()
 
+        covers = db.query(MediaItem.id).filter(
+            MediaItem.original_path.like(path_prefix + "%")
+        ).order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc()).limit(4).all()
+        cover_media_ids = [c[0] for c in covers]
+
         res.append(
             SyncedDirectoryResponse(
                 id=d.id,
@@ -795,6 +874,7 @@ def get_synced_directories(db: Session = Depends(get_db)):
                 updated_at=d.updated_at,
                 total_files=total_files,
                 synced_files=synced_files,
+                cover_media_ids=cover_media_ids,
             )
         )
     return res
@@ -847,7 +927,12 @@ def add_synced_directory(req: SyncedDirectoryCreate, db: Session = Depends(get_d
     synced_files = db.query(MediaItem).filter(
         MediaItem.original_path.like(path_prefix + "%")
     ).count()
-    
+
+    covers = db.query(MediaItem.id).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc()).limit(4).all()
+    cover_media_ids = [c[0] for c in covers]
+
     log_audit_entry("sync_dir_added", "success", f"Added directory to sync: {path_obj}")
 
     return SyncedDirectoryResponse(
@@ -859,7 +944,93 @@ def add_synced_directory(req: SyncedDirectoryCreate, db: Session = Depends(get_d
         task_id=task_id,
         total_files=total_files,
         synced_files=synced_files,
+        cover_media_ids=cover_media_ids,
     )
+
+@app.get("/api/settings/synced-directories/{id}", response_model=SyncedDirectoryResponse)
+def get_synced_directory(id: str, db: Session = Depends(get_db)):
+    """Get a single synced directory."""
+    import os
+    d = db.get(SyncedDirectory, id)
+    if not d:
+        raise HTTPException(404, "Synced directory not found")
+        
+    total_files = 0
+    try:
+        path_obj = Path(d.path)
+        if path_obj.is_dir():
+            for dirpath, _dirnames, filenames in os.walk(path_obj):
+                for fname in filenames:
+                    ext = Path(fname).suffix.lower()
+                    if ext in settings.SUPPORTED_EXTENSIONS:
+                        total_files += 1
+    except Exception:
+        pass
+
+    path_prefix = d.path
+    if not path_prefix.endswith(os.sep):
+        path_prefix += os.sep
+
+    synced_files = db.query(MediaItem).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).count()
+
+    covers = db.query(MediaItem.id).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc()).limit(4).all()
+    cover_media_ids = [c[0] for c in covers]
+
+    return SyncedDirectoryResponse(
+        id=d.id,
+        path=d.path,
+        is_active=d.is_active,
+        created_at=d.created_at,
+        updated_at=d.updated_at,
+        total_files=total_files,
+        synced_files=synced_files,
+        cover_media_ids=cover_media_ids,
+    )
+
+from backend.schemas import DirectoryToAlbumRequest
+from backend.db.models import Album
+
+@app.post("/api/synced-directories/{dir_id}/add-to-albums")
+def add_directory_to_albums(dir_id: str, req: DirectoryToAlbumRequest, db: Session = Depends(get_db)):
+    """Add all media items in a synced directory to one or more albums."""
+    import os
+    
+    directory = db.get(SyncedDirectory, dir_id)
+    if not directory:
+        raise HTTPException(404, "Synced directory not found")
+        
+    albums = db.query(Album).filter(Album.id.in_(req.album_ids)).all()
+    if not albums:
+        raise HTTPException(404, "No valid albums found")
+        
+    path_prefix = directory.path
+    if not path_prefix.endswith(os.sep):
+        path_prefix += os.sep
+        
+    media_items = db.query(MediaItem).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).all()
+    
+    if not media_items:
+        return {"status": "success", "added": 0}
+        
+    added_count = 0
+    for album in albums:
+        existing_ids = {item.id for item in album.media_items}
+        for item in media_items:
+            if item.id not in existing_ids:
+                album.media_items.append(item)
+                added_count += 1
+                
+                if not album.cover_media_id:
+                    album.cover_media_id = item.id
+                    
+    db.commit()
+    return {"status": "success", "added": added_count}
 
 @app.delete("/api/settings/synced-directories/{id}")
 def remove_synced_directory(id: str, db: Session = Depends(get_db)):
@@ -1016,10 +1187,13 @@ def get_album_media(album_id: str, db: Session = Depends(get_db)):
             )
         )
         
+    total_size = sum(item.file_size_bytes or 0 for item in items)
+
     return TimelineResponse(
         items=summaries,
         next_cursor=None,
         total_count=len(summaries),
+        total_size_bytes=total_size,
     )
 
 @app.post("/api/albums/{album_id}/media")
@@ -1039,3 +1213,151 @@ def add_media_to_album(album_id: str, req: AlbumMediaAdd, db: Session = Depends(
                 
     db.commit()
     return {"status": "success"}
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  People & Pets                                                           ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+@app.get("/api/people", response_model=list[PersonResponse])
+def get_people(db: Session = Depends(get_db)):
+    """List all people with their cover face."""
+    people = db.execute(
+        select(Person).order_by(Person.name)
+    ).scalars().all()
+    
+    responses = []
+    for p in people:
+        count = db.execute(select(func.count(Face.id)).where(Face.person_id == p.id)).scalar() or 0
+        cover_media_id = None
+        if p.cover_face_id:
+            cover_face = db.get(Face, p.cover_face_id)
+            if cover_face:
+                cover_media_id = cover_face.media_item_id
+                
+        responses.append(PersonResponse(
+            id=p.id,
+            name=p.name,
+            cover_media_id=cover_media_id,
+            face_count=count
+        ))
+    return responses
+
+@app.put("/api/people/{person_id}", response_model=PersonResponse)
+def update_person(person_id: str, req: PersonUpdate, db: Session = Depends(get_db)):
+    """Rename a person."""
+    person = db.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+    person.name = req.name
+    db.commit()
+    db.refresh(person)
+    
+    count = db.execute(select(func.count(Face.id)).where(Face.person_id == person.id)).scalar() or 0
+    cover_media_id = None
+    if person.cover_face_id:
+        cover_face = db.get(Face, person.cover_face_id)
+        if cover_face:
+            cover_media_id = cover_face.media_item_id
+            
+    return PersonResponse(
+        id=person.id,
+        name=person.name,
+        cover_media_id=cover_media_id,
+        face_count=count
+    )
+
+@app.get("/api/people/{person_id}/media", response_model=TimelineResponse)
+def get_person_media(person_id: str, db: Session = Depends(get_db)):
+    """Get all media items containing a specific person."""
+    person = db.get(Person, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+        
+    sort_col = func.coalesce(
+        MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
+    )
+    
+    # Query media items that have a face belonging to this person
+    items = db.execute(
+        select(MediaItem)
+        .join(Face, Face.media_item_id == MediaItem.id)
+        .where(Face.person_id == person_id)
+        .order_by(sort_col.desc(), MediaItem.id.desc())
+    ).scalars().all()
+    
+    summaries = []
+    for item in items:
+        is_online = item.volume.is_online if item.volume else True
+        summaries.append(
+            MediaItemSummary(
+                id=item.id,
+                sha256=item.sha256,
+                thumb_path=item.thumb_path,
+                date_taken=item.date_taken,
+                date_modified=item.date_modified,
+                width=item.width,
+                height=item.height,
+                mime_type=item.mime_type,
+                is_favorite=item.is_favorite,
+                is_locked=item.is_locked,
+                is_online=is_online,
+            )
+        )
+        
+    total_size = sum(item.file_size_bytes or 0 for item in items)
+
+    return TimelineResponse(
+        items=summaries,
+        next_cursor=None,
+        total_count=len(summaries),
+        total_size_bytes=total_size,
+    )
+
+@app.get("/api/pets", response_model=TimelineResponse)
+def get_pets(db: Session = Depends(get_db)):
+    """Get all media items tagged with 'Dog' or 'Cat'."""
+    sort_col = func.coalesce(
+        MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
+    )
+    
+    items = db.execute(
+        select(MediaItem)
+        .join(MediaItem.tags)
+        .where(Tag.name.in_(["Dog", "Cat"]))
+        .order_by(sort_col.desc(), MediaItem.id.desc())
+    ).scalars().unique().all()
+    
+    summaries = []
+    for item in items:
+        is_online = item.volume.is_online if item.volume else True
+        summaries.append(
+            MediaItemSummary(
+                id=item.id,
+                sha256=item.sha256,
+                thumb_path=item.thumb_path,
+                date_taken=item.date_taken,
+                date_modified=item.date_modified,
+                width=item.width,
+                height=item.height,
+                mime_type=item.mime_type,
+                is_favorite=item.is_favorite,
+                is_locked=item.is_locked,
+                is_online=is_online,
+            )
+        )
+        
+    total_size = sum(item.file_size_bytes or 0 for item in items)
+
+    return TimelineResponse(
+        items=summaries,
+        next_cursor=None,
+        total_count=len(summaries),
+        total_size_bytes=total_size,
+    )
+
+@app.post("/api/ml/cluster_faces")
+def trigger_cluster_faces(db: Session = Depends(get_db)):
+    """Manually trigger face clustering."""
+    from backend.services.ml import cluster_faces
+    result = cluster_faces(db)
+    return result

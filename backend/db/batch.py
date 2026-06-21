@@ -93,7 +93,15 @@ def batch_insert_media_items(
     }
 
     for start in range(0, len(records), batch_size):
-        batch = records[start : start + batch_size]
+        raw_batch = records[start : start + batch_size]
+
+        # Normalize keys across the batch to avoid SQLAlchemy bindparameter errors
+        # If dicts have varying keys, SQLAlchemy batch INSERT gets confused.
+        batch_keys = set()
+        for r in raw_batch:
+            batch_keys.update(r.keys())
+        
+        batch = [{k: r.get(k) for k in batch_keys} for r in raw_batch]
 
         try:
             if on_conflict == "update":
@@ -163,7 +171,12 @@ def batch_insert_media_items_simple(
     total = 0
 
     for start in range(0, len(records), batch_size):
-        batch = records[start : start + batch_size]
+        raw_batch = records[start : start + batch_size]
+        batch_keys = set()
+        for r in raw_batch:
+            batch_keys.update(r.keys())
+        batch = [{k: r.get(k) for k in batch_keys} for r in raw_batch]
+
         try:
             session.bulk_insert_mappings(MediaItem, batch)
             session.commit()

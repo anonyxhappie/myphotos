@@ -31,6 +31,7 @@ export interface TimelineOptions {
   favorites_only?: boolean;
   videos_only?: boolean;
   locked_only?: boolean;
+  dir_id?: string;
   sort?: string;
 }
 
@@ -40,6 +41,7 @@ export async function fetchTimeline(opts: TimelineOptions = {}): Promise<Timelin
   if (opts.favorites_only) params.set('favorites_only', 'true');
   if (opts.videos_only) params.set('videos_only', 'true');
   if (opts.locked_only) params.set('locked_only', 'true');
+  if (opts.dir_id) params.set('dir_id', opts.dir_id);
   if (opts.sort) params.set('sort', opts.sort);
   
   return fetchJson<TimelineResponse>(`${BASE}/timeline?${params}`);
@@ -142,6 +144,18 @@ export async function triggerMLPipeline(): Promise<ScanEnqueuedResponse> {
   });
 }
 
+export async function retrainML(): Promise<ScanEnqueuedResponse> {
+  return fetchJson<ScanEnqueuedResponse>(`${BASE}/ml/retrain`, {
+    method: 'POST',
+  });
+}
+
+export async function resyncAll(): Promise<ScanEnqueuedResponse[]> {
+  return fetchJson<ScanEnqueuedResponse[]>(`${BASE}/scan/resync_all`, {
+    method: 'POST',
+  });
+}
+
 export async function searchPhotos(query: string): Promise<TimelineResponse> {
   const params = new URLSearchParams({ q: query });
   return fetchJson<TimelineResponse>(`${BASE}/search?${params}`);
@@ -153,6 +167,7 @@ export async function fetchHealth(): Promise<{
   status: string;
   total_media_items: number;
   total_volumes: number;
+  total_size_bytes: number;
 }> {
   return fetchJson(`${BASE}/health`);
 }
@@ -161,6 +176,10 @@ export async function fetchHealth(): Promise<{
 
 export async function fetchSyncedDirectories(): Promise<SyncedDirectory[]> {
   return fetchJson<SyncedDirectory[]>(`${BASE}/settings/synced-directories`);
+}
+
+export async function fetchSyncedDirectory(id: string): Promise<SyncedDirectory> {
+  return fetchJson<SyncedDirectory>(`${BASE}/settings/synced-directories/${id}`);
 }
 
 export async function addSyncedDirectory(path: string): Promise<SyncedDirectory> {
@@ -226,5 +245,13 @@ export async function addMediaToAlbum(albumId: string, mediaIds: string[]): Prom
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ media_ids: mediaIds }),
+  });
+}
+
+export async function addDirectoryToAlbums(dirId: string, albumIds: string[]): Promise<{status: string; added: number}> {
+  return fetchJson<{status: string; added: number}>(`${BASE}/synced-directories/${dirId}/add-to-albums`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ album_ids: albumIds }),
   });
 }

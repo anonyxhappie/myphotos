@@ -172,6 +172,7 @@ class MediaItem(Base):
     volume = relationship("Volume", back_populates="media_items")
     albums = relationship("Album", secondary=media_albums, back_populates="media_items", lazy="selectin")
     tags = relationship("Tag", secondary=media_tags, back_populates="media_items", lazy="selectin")
+    faces = relationship("Face", back_populates="media_item", cascade="all, delete-orphan", lazy="selectin")
 
     # -- composite indexes for common query patterns -----------------------
     __table_args__ = (
@@ -236,6 +237,50 @@ class Tag(Base):
 
     def __repr__(self) -> str:
         return f"<Tag name={self.name!r} source={self.source!r}>"
+
+
+# ---------------------------------------------------------------------------
+# People & Faces
+# ---------------------------------------------------------------------------
+class Person(Base):
+    """A distinct person identified via face clustering."""
+    __tablename__ = "people"
+
+    id: str = Column(String(36), primary_key=True, default=_new_uuid)
+    name: str = Column(String(255), nullable=False, default="Unknown Person")
+    cover_face_id: str = Column(String(36), ForeignKey("faces.id", ondelete="SET NULL", use_alter=True), nullable=True)
+
+    created_at: datetime = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    faces = relationship("Face", back_populates="person", foreign_keys="Face.person_id", lazy="dynamic")
+    cover_face = relationship("Face", foreign_keys=[cover_face_id], post_update=True)
+
+    def __repr__(self) -> str:
+        return f"<Person name={self.name!r}>"
+
+
+class Face(Base):
+    """A detected face in a specific media item."""
+    __tablename__ = "faces"
+
+    id: str = Column(String(36), primary_key=True, default=_new_uuid)
+    media_item_id: str = Column(String(36), ForeignKey("media_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    person_id: str = Column(String(36), ForeignKey("people.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Bounding box
+    box_x1: float = Column(Float, nullable=True)
+    box_y1: float = Column(Float, nullable=True)
+    box_x2: float = Column(Float, nullable=True)
+    box_y2: float = Column(Float, nullable=True)
+
+    created_at: datetime = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    media_item = relationship("MediaItem", back_populates="faces")
+    person = relationship("Person", back_populates="faces", foreign_keys=[person_id])
+
+    def __repr__(self) -> str:
+        return f"<Face id={self.id!r} media={self.media_item_id!r}>"
 
 
 # ---------------------------------------------------------------------------

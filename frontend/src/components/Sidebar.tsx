@@ -1,21 +1,30 @@
-import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { fetchHealth } from '../api/client';
-
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  currentCount?: number;
+  currentSize?: number;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 type IconName =
   | 'photos'
   | 'albums'
+  | 'folders'
   | 'heart'
   | 'recent'
   | 'videos'
   | 'documents'
   | 'screenshots'
   | 'lock'
+  | 'people'
   | 'settings';
 
 function BrandMark() {
@@ -58,6 +67,13 @@ function NavigationIcon({ name }: { name: IconName }) {
         <path d="M8 2h8M8 22h8" />
         <circle cx="9" cy="9" r="1.25" />
         <path d="m5 17 4-4 3 2.5 2-2 5 4" />
+      </svg>
+    );
+  }
+  if (name === 'folders') {
+    return (
+      <svg {...common}>
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
     );
   }
@@ -108,21 +124,36 @@ function NavigationIcon({ name }: { name: IconName }) {
       </svg>
     );
   }
-  return (
-    <svg {...common}>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.85l.05.05-2.9 2.9-.05-.05A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21h-4v-.05A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.85.34l-.05.05-2.9-2.9.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3v-4h.05A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.85L4.2 7.1l2.9-2.9.05.05A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3h4v.05A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.85-.34l.05-.05 2.9 2.9-.05.05A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21v4h-.05A1.7 1.7 0 0 0 19.4 15Z" />
-    </svg>
-  );
+  if (name === 'settings') {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.85l.05.05-2.9 2.9-.05-.05A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21h-4v-.05A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.85.34l-.05.05-2.9-2.9.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3v-4h.05A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.85L4.2 7.1l2.9-2.9.05.05A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3h4v.05A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.85-.34l.05-.05 2.9 2.9-.05.05A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21v4h-.05A1.7 1.7 0 0 0 19.4 15Z" />
+      </svg>
+    );
+  }
+  if (name === 'people') {
+    return (
+      <svg {...common}>
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+        <circle cx="9" cy="7" r="4"></circle>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+      </svg>
+    );
+  }
+  return null;
 }
 
 const primaryItems: Array<{ to: string; label: string; icon: IconName; end?: boolean }> = [
   { to: '/', label: 'Photos', icon: 'photos', end: true },
   { to: '/albums', label: 'Albums', icon: 'albums' },
+  { to: '/folders', label: 'Folders', icon: 'folders' },
 ];
 
 const libraryItems: Array<{ to: string; label: string; icon: IconName }> = [
   { to: '/favourites', label: 'Favourites', icon: 'heart' },
+  { to: '/people', label: 'People & Pets', icon: 'people' },
   { to: '/recent', label: 'Recently added', icon: 'recent' },
   { to: '/videos', label: 'Videos', icon: 'videos' },
   { to: '/documents', label: 'Documents', icon: 'documents' },
@@ -155,15 +186,7 @@ function NavItem({
   );
 }
 
-export default function Sidebar({ isOpen, onClose }: SidebarProps) {
-  const [totalVolumes, setTotalVolumes] = useState(0);
-
-  useEffect(() => {
-    fetchHealth()
-      .then((health) => setTotalVolumes(health.total_volumes))
-      .catch(() => undefined);
-  }, []);
-
+export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize = 0 }: SidebarProps) {
   return (
     <>
       <button
@@ -216,8 +239,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           </div>
           <div>
             <div className="storage-title">Local storage</div>
-            <div className="storage-caption">
-              {totalVolumes} volume{totalVolumes === 1 ? '' : 's'} connected
+            <div className="storage-caption" style={{ lineHeight: '1.4' }}>
+              {currentCount.toLocaleString()} item{currentCount === 1 ? '' : 's'} ({formatBytes(currentSize)})
             </div>
           </div>
         </div>
@@ -226,7 +249,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
         <NavItem to="/" label="Photos" icon="photos" end />
         <NavItem to="/albums" label="Albums" icon="albums" />
-        <NavItem to="/favourites" label="Favourites" icon="heart" />
+        <NavItem to="/folders" label="Folders" icon="folders" />
         <NavItem to="/settings" label="Settings" icon="settings" />
       </nav>
     </>

@@ -25,7 +25,9 @@ imagehash>=4.3.1                # perceptual hashing (pHash)
 lancedb>=0.6.0
 open-clip-torch>=2.24.0
 torch>=2.2.0
-# deepface>=0.0.89
+facenet-pytorch>=2.5.3
+scikit-learn>=1.4.0
+pytesseract>=0.3.10
 
 # -- Dev / Testing ---------------------------------------------------------
 pytest>=8.0.0

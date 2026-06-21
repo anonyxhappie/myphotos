@@ -62,12 +62,20 @@ export interface MediaItemDetail {
   original_available: boolean;
   volume_label: string | null;
   offline_message: string | null;
+  tags: Tag[];
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  source: string;
 }
 
 export interface TimelineResponse {
   items: MediaItemSummary[];
   next_cursor: string | null;
   total_count: number;
+  total_size_bytes: number;
 }
 
 export interface VolumeResponse {
@@ -126,6 +134,7 @@ export interface SyncedDirectory {
   task_id?: string;
   total_files: number;
   synced_files: number;
+  cover_media_ids: string[];
 }
 
 export interface Album {

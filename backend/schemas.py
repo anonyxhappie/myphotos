@@ -14,6 +14,13 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
+class TagResponse(BaseModel):
+    id: str
+    name: str
+    source: str
+    
+    model_config = {"from_attributes": True}
+
 
 # ---------------------------------------------------------------------------
 # Volume
@@ -116,6 +123,8 @@ class MediaItemDetail(BaseModel):
     volume_label: Optional[str] = None
     offline_message: Optional[str] = None
 
+    tags: list[TagResponse] = []
+
     model_config = {"from_attributes": True}
 
 
@@ -132,6 +141,10 @@ class TimelineResponse(BaseModel):
     )
     total_count: int = Field(
         description="Total number of media items in the library."
+    )
+    total_size_bytes: int = Field(
+        default=0,
+        description="Total size in bytes of the media items."
     )
 
 
@@ -200,6 +213,7 @@ class SyncedDirectoryResponse(BaseModel):
     task_id: Optional[str] = None
     total_files: int = 0
     synced_files: int = 0
+    cover_media_ids: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -222,6 +236,9 @@ class AlbumResponse(BaseModel):
 class AlbumMediaAdd(BaseModel):
     media_ids: list[str]
 
+class DirectoryToAlbumRequest(BaseModel):
+    album_ids: list[str]
+
 # ---------------------------------------------------------------------------
 # Audit Log Response
 # ---------------------------------------------------------------------------
@@ -237,3 +254,17 @@ class AuditLogResponse(BaseModel):
 
 class BulkDeleteRequest(BaseModel):
     media_ids: list[str]
+
+# ---------------------------------------------------------------------------
+# People
+# ---------------------------------------------------------------------------
+class PersonResponse(BaseModel):
+    id: str
+    name: str
+    cover_media_id: Optional[str] = None
+    face_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+class PersonUpdate(BaseModel):
+    name: str

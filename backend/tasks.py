@@ -314,18 +314,70 @@ def task_process_ml_pipeline() -> dict:
     Runs in batches until no more unprocessed items exist.
     """
     from backend.services.ml import index_unprocessed_items
+    from backend.services.task_control import write_task_progress
+    from backend.db.models import MediaItem
+    import time
     
     logger.info("Starting ML pipeline processing...")
     
+    task_id = "ml-pipeline"
+    start_time = time.time()
+    
     total_processed = 0
     with SessionLocal() as session:
+        total_to_process = session.query(MediaItem).filter(
+            (MediaItem.clip_embedded == False) | (MediaItem.faces_scanned == False),
+            MediaItem.mime_type.like("image/%")
+        ).count()
+        
+        if total_to_process > 0:
+            write_task_progress(
+                task_id=task_id,
+                status="running",
+                total_found=total_to_process,
+                processed=0,
+                path="AI Media Analysis",
+                mode="scan",
+                start_time=start_time
+            )
+            
         while True:
-            result = index_unprocessed_items(session, batch_size=50)
+            result = index_unprocessed_items(session, batch_size=20)
             processed = result.get("processed", 0)
             total_processed += processed
             
+            if total_to_process > 0:
+                write_task_progress(
+                    task_id=task_id,
+                    status="running",
+                    total_found=total_to_process,
+                    processed=total_processed,
+                    path="AI Media Analysis",
+                    mode="scan",
+                    start_time=start_time
+                )
+            
             if result.get("status") == "idle" or processed == 0:
                 break
+                
+        if total_to_process > 0:
+            write_task_progress(
+                task_id=task_id,
+                status="complete",
+                total_found=total_to_process,
+                processed=total_processed,
+                path="AI Media Analysis",
+                mode="scan",
+                start_time=start_time
+            )
+            
+            from backend.db.models import AuditLog
+            session.add(AuditLog(
+                action="ml_pipeline_complete",
+                level="success",
+                details=f"Completed AI analysis for {total_processed} items."
+            ))
+            session.commit()
                 
     summary = {"total_processed": total_processed}
     logger.info("ML pipeline complete: %s", summary)

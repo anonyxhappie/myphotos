@@ -10,6 +10,8 @@ import {
   pauseScan,
   resumeScan,
   retryScan,
+  resyncAll,
+  retrainML,
 } from '../api/client';
 
 interface SettingsProps {
@@ -161,10 +163,29 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
     }
   };
 
+  const handleResyncAll = async () => {
+    if (!confirm('Start a background scan for all monitored directories?')) return;
+    try {
+      await resyncAll();
+    } catch (e) {
+      alert('Failed to trigger resync: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const handleRetrainML = async () => {
+    if (!confirm('This will reset AI embeddings and faces, then re-process all media. This might take a while. Continue?')) return;
+    try {
+      await retrainML();
+    } catch (e) {
+      alert('Failed to trigger retraining: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
 
   const loadAuditLogs = useCallback(async () => {
+    setLogsLoading(true);
     try {
       const logs = await fetchAuditLogs();
       setAuditLogs(logs);
@@ -196,8 +217,10 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
   };
 
   return (
-    <div className="page-scroll settings-page">
-      <h1 className="settings-page-title">Settings</h1>
+    <div className="flex flex-col h-full overflow-hidden p-4 md:p-8 max-w-[1280px] mx-auto w-full gap-6">
+      <h1 className="settings-page-title shrink-0 mb-0">Settings</h1>
+      
+      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-8 pb-8">
 
       {backgroundScans.length > 0 && (
         <section className="settings-card">
@@ -314,23 +337,44 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
               Folders listed here are monitored for changes. Any photos dropped into these folders will automatically appear in your library.
             </p>
           </div>
-          <button
-            onClick={handleAdd}
-            className="outlined-action-button settings-add-button"
-          >
-            <svg 
-              width="18" 
-              height="18" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="2"
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRetrainML}
+              className="p-2 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 transition-colors border border-indigo-500/20"
+              title="Retrain AI"
             >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>Add folder</span>
-          </button>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                 <path d="M2 12h4l2-9 5 18 2-9h5"/>
+              </svg>
+            </button>
+            <button
+              onClick={handleResyncAll}
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/5"
+              title="Resync All"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+              </svg>
+            </button>
+            <button
+              onClick={handleAdd}
+              className="outlined-action-button settings-add-button"
+            >
+              <svg 
+                width="18" 
+                height="18" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Add folder</span>
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -464,7 +508,7 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
             No activity logged yet.
           </div>
         ) : (
-          <div className="border-l-2 border-white/10 ml-3 pl-6 space-y-5 max-h-[300px] overflow-y-auto pr-2">
+          <div className="border-l-2 border-white/10 ml-3 pl-6 space-y-5">
             {auditLogs.map((log) => (
               <div key={log.id} className="relative">
                 {/* Visual node indicator */}
@@ -524,6 +568,7 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
           </button>
         </div>
       </section>
+      </div>
     </div>
   );
 }

@@ -444,6 +444,18 @@ export default function Lightbox({
                 <p className="metadata-description">{detail.google_description}</p>
               </InfoSection>
             )}
+
+            {detail.tags && detail.tags.length > 0 && (
+              <InfoSection title="AI Tags">
+                <div className="metadata-tags">
+                  {detail.tags.filter(t => t.source !== 'ai_ocr').map(tag => (
+                    <span key={tag.id} className="tag-chip" title={`Source: ${tag.source}`}>
+                      {tag.name}
+                    </span>
+                  ))}
+                </div>
+              </InfoSection>
+            )}
           </div>
         </aside>
       )}

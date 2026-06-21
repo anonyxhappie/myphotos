@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
-import { fetchAlbums, createAlbum, addMediaToAlbum } from '../api/client';
+import { fetchAlbums, createAlbum, addMediaToAlbum, addDirectoryToAlbums } from '../api/client';
 import type { Album } from '../api/types';
 
 interface AddToAlbumModalProps {
   selectedIds: string[];
+  dirId?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export default function AddToAlbumModal({ selectedIds, onClose, onSuccess }: AddToAlbumModalProps) {
+export default function AddToAlbumModal({ selectedIds, dirId, onClose, onSuccess }: AddToAlbumModalProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -28,7 +29,11 @@ export default function AddToAlbumModal({ selectedIds, onClose, onSuccess }: Add
     if (submitting) return;
     setSubmitting(true);
     try {
-      await addMediaToAlbum(albumId, selectedIds);
+      if (dirId) {
+        await addDirectoryToAlbums(dirId, [albumId]);
+      } else {
+        await addMediaToAlbum(albumId, selectedIds);
+      }
       onSuccess();
     } catch (e) {
       console.error(e);
@@ -44,7 +49,11 @@ export default function AddToAlbumModal({ selectedIds, onClose, onSuccess }: Add
     setSubmitting(true);
     try {
       const album = await createAlbum(newTitle.trim());
-      await addMediaToAlbum(album.id, selectedIds);
+      if (dirId) {
+        await addDirectoryToAlbums(dirId, [album.id]);
+      } else {
+        await addMediaToAlbum(album.id, selectedIds);
+      }
       onSuccess();
     } catch (e) {
       console.error(e);

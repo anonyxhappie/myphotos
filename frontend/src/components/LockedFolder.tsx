@@ -4,9 +4,10 @@ import type { MediaItemSummary } from '../api/types';
 
 interface LockedFolderProps {
   onPhotoClick: (item: MediaItemSummary, list: MediaItemSummary[]) => void;
+  onTotalCountChange: (count: number, size: number) => void;
 }
 
-export default function LockedFolder({ onPhotoClick }: LockedFolderProps) {
+export default function LockedFolder({ onPhotoClick, onTotalCountChange }: LockedFolderProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
@@ -29,7 +30,7 @@ export default function LockedFolder({ onPhotoClick }: LockedFolderProps) {
         searchQuery="" 
         lockedOnly={true} 
         onPhotoClick={onPhotoClick} 
-        onTotalCountChange={() => {}} 
+        onTotalCountChange={onTotalCountChange} 
       />
     );
   }

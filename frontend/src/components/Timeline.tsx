@@ -12,10 +12,13 @@ interface TimelineProps {
   videosOnly?: boolean;
   lockedOnly?: boolean;
   albumId?: string;
+  dirId?: string;
+  personId?: string;
+  petsOnly?: boolean;
   sort?: string;
   refreshToken?: number;
   onPhotoClick: (item: MediaItemSummary, list: MediaItemSummary[]) => void;
-  onTotalCountChange: (count: number) => void;
+  onTotalCountChange: (count: number, size: number) => void;
 }
 
 // ─── Date grouping ──────────────────────────────────────────────
@@ -215,6 +218,9 @@ export default function Timeline({
   videosOnly = false,
   lockedOnly = false,
   albumId,
+  dirId,
+  personId,
+  petsOnly = false,
   sort = "date_taken",
   refreshToken = 0,
   onPhotoClick, 
@@ -222,6 +228,7 @@ export default function Timeline({
 }: TimelineProps) {
   const [items, setItems] = useState<MediaItemSummary[]>([]);
   const [resultCount, setResultCount] = useState(0);
+  const [resultSize, setResultSize] = useState(0);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [grouping, setGrouping] = useState<GroupingMode>('day');
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -275,34 +282,45 @@ export default function Timeline({
 
     try {
       let res;
-      if (searchQuery.trim()) {
-        res = await searchPhotos(searchQuery.trim());
-        setHasMore(false); // Search returns all results at once
+      if (personId) {
+        // Use person media endpoint
+        const response = await fetch(`/api/people/${personId}/media`);
+        res = await response.json();
+      } else if (petsOnly) {
+        // Use pets endpoint
+        const response = await fetch(`/api/pets`);
+        res = await response.json();
+      } else if (searchQuery) {
+        res = await searchPhotos(searchQuery);
+        setHasMore(false);
       } else if (albumId) {
         res = await fetchAlbumMedia(albumId);
-        setHasMore(false); // Albums API currently returns all items without pagination
+        setHasMore(false);
       } else {
         res = await fetchTimeline({
-          cursor: nextCursor,
-          limit: 200,
+          cursor: nextCursor || undefined,
+          limit: 100,
           favorites_only: favoritesOnly,
           videos_only: videosOnly,
           locked_only: lockedOnly,
-          sort: sort,
+          dir_id: dirId,
+          sort
         });
-        setNextCursor(res.next_cursor);
-        if (!res.next_cursor) setHasMore(false);
       }
+      setNextCursor(res.next_cursor);
+      if (!res.next_cursor) setHasMore(false);
       
       if (!searchQuery.trim()) {
-        onTotalCountChange(res.total_count);
+        onTotalCountChange(res.total_count, res.total_size_bytes);
       }
       setResultCount(res.total_count);
+      setResultSize(res.total_size_bytes || 0);
 
       setItems((prev) => {
-        const appendedItems = searchQuery.trim() ? res.items : [...prev, ...res.items];
+        const newItems = res.items || [];
+        const appendedItems = (searchQuery || personId || petsOnly || albumId) ? newItems : [...prev, ...newItems];
         // Deduplicate by ID
-        return Array.from(new Map(appendedItems.map(item => [item.id, item])).values());
+        return Array.from(new Map(appendedItems.map((item: MediaItemSummary) => [item.id, item])).values()) as MediaItemSummary[];
       });
 
     } catch (err) {
@@ -313,6 +331,7 @@ export default function Timeline({
     }
   }, [
     albumId,
+    dirId,
     favoritesOnly,
     hasMore,
     isLoading,
@@ -347,9 +366,10 @@ export default function Timeline({
           favorites_only: favoritesOnly,
           videos_only: videosOnly,
           locked_only: lockedOnly,
+          dir_id: dirId,
           sort,
         });
-        onTotalCountChange(res.total_count);
+        onTotalCountChange(res.total_count, res.total_size_bytes);
         setResultCount(res.total_count);
         setItems((prev) => {
           const existingIds = new Set(prev.map((item) => item.id));
@@ -363,6 +383,7 @@ export default function Timeline({
     })();
   }, [
     albumId,
+    dirId,
     favoritesOnly,
     hasLoadedOnce,
     lockedOnly,
@@ -382,7 +403,7 @@ export default function Timeline({
     try {
       await bulkDeleteMedia(ids);
       setItems((prev) => prev.filter((item) => !selectedIds.has(item.id)));
-      onTotalCountChange(items.length - ids.length);
+      onTotalCountChange(items.length - ids.length, resultSize);
       setSelectedIds(new Set());
     } catch (e) {
       console.error(e);
@@ -395,9 +416,22 @@ export default function Timeline({
       <div className="timeline-toolbar">
         <div className="timeline-heading">
           <h1>{title || (searchQuery ? 'Search results' : 'Photos')}</h1>
-          <span>
-            {resultCount.toLocaleString()} {resultCount === 1 ? 'item' : 'items'}
-          </span>
+          <div className="flex items-center gap-4">
+            <span>
+              {resultCount.toLocaleString()} {resultCount === 1 ? 'item' : 'items'}
+            </span>
+            {dirId && resultCount > 0 && (
+              <button 
+                onClick={() => {
+                  setSelectedIds(new Set()); // ensure no selected ids when passing dirId
+                  setShowAddToAlbum(true);
+                }}
+                className="bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white px-3 py-1 rounded-md text-sm font-medium transition-colors border border-[var(--color-accent)]/20"
+              >
+                Add all to Album
+              </button>
+            )}
+          </div>
         </div>
 
         {items.length > 0 && (
@@ -507,6 +541,7 @@ export default function Timeline({
       {showAddToAlbum && (
         <AddToAlbumModal 
           selectedIds={Array.from(selectedIds)} 
+          dirId={dirId && selectedIds.size === 0 ? dirId : undefined}
           onClose={() => setShowAddToAlbum(false)}
           onSuccess={() => {
             setShowAddToAlbum(false);

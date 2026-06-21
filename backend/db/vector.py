@@ -25,6 +25,6 @@ def get_face_table():
     schema = pa.schema([
         pa.field("media_id", pa.string()),
         pa.field("face_id", pa.string()), # Unique ID for the detected face
-        pa.field("vector", pa.list_(pa.float32(), 128)),
+        pa.field("vector", pa.list_(pa.float32(), 512)),
     ])
     return db.create_table("face_embeddings", schema=schema, exist_ok=True)

@@ -11,11 +11,17 @@ import EmptyState from './components/EmptyState';
 import Settings from './components/Settings';
 import Albums from './components/Albums';
 import AlbumDetail from './components/AlbumDetail';
+import Folders from './components/Folders';
+import FolderDetail from './components/FolderDetail';
 import LockedFolder from './components/LockedFolder';
+import PeoplePetsPage from './pages/PeoplePetsPage';
+import PersonViewPage from './pages/PersonViewPage';
+import type { PersonResponse } from './api/people';
 
 export default function App() {
   const navigate = useNavigate();
   const [totalCount, setTotalCount] = useState(0);
+  const [totalSize, setTotalSize] = useState(0);
   const [isLibraryLoading, setIsLibraryLoading] = useState(true);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState<number | null>(null);
   const [activeMediaList, setActiveMediaList] = useState<MediaItemSummary[]>([]);
@@ -25,6 +31,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [timelineKey, setTimelineKey] = useState(0);
   const [galleryRefreshToken, setGalleryRefreshToken] = useState(0);
+  const [activePerson, setActivePerson] = useState<PersonResponse | null>(null);
 
   // Scan progress tracking
   const [activeScans, setActiveScans] = useState<{ taskId: string; path: string; mode?: 'scan' | 'takeout' }[]>([]);
@@ -40,14 +47,16 @@ export default function App() {
     setActiveMediaList(list);
   }, []);
 
-  const handleTotalCountChange = useCallback((count: number) => {
+  const handleTotalCountChange = useCallback((count: number, size: number) => {
     setTotalCount(count);
+    setTotalSize(size);
   }, []);
 
   const refreshTotalCount = useCallback(async () => {
     try {
       const res = await fetchTimeline({ limit: 1 });
       setTotalCount(res.total_count);
+      setTotalSize(res.total_size_bytes);
     } catch (err) {
       console.error('Failed to fetch total count:', err);
     } finally {
@@ -65,7 +74,10 @@ export default function App() {
     let isActive = true;
     fetchTimeline({ limit: 1 })
       .then((response) => {
-        if (isActive) setTotalCount(response.total_count);
+        if (isActive) {
+          setTotalCount(response.total_count);
+          setTotalSize(response.total_size_bytes);
+        }
       })
       .catch((error) => console.error('Failed to fetch total count:', error))
       .finally(() => {
@@ -224,7 +236,12 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
+        currentCount={totalCount}
+        currentSize={totalSize}
+      />
 
       <div className="app-content">
         <Header
@@ -264,17 +281,39 @@ export default function App() {
               } 
             />
             <Route path="/albums" element={<Albums />} />
-            <Route path="/albums/:id" element={<AlbumDetail onPhotoClick={handlePhotoClick} />} />
-            <Route path="/locked" element={<LockedFolder onPhotoClick={handlePhotoClick} />} />
+            <Route path="/albums/:id" element={<AlbumDetail onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/folders" element={<Folders />} />
+            <Route path="/folders/:id" element={<FolderDetail onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/locked" element={<LockedFolder onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
             
+            {/* People & Pets */}
+            <Route path="/people" element={
+              activePerson ? (
+                <PersonViewPage 
+                  person={activePerson} 
+                  onBack={() => setActivePerson(null)}
+                  onPersonUpdate={setActivePerson}
+                  onPhotoClick={handlePhotoClick}
+                  onTotalCountChange={handleTotalCountChange}
+                />
+              ) : (
+                <PeoplePetsPage 
+                  onPersonClick={setActivePerson} 
+                  onPetsClick={() => navigate('/pets')}
+                  isAnalyzing={hasActiveScanWork}
+                />
+              )
+            } />
+            <Route path="/pets" element={<Timeline key="pets" title="Pets" searchQuery="" petsOnly={true} onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+
             {/* Smart Collections */}
-            <Route path="/favourites" element={<Timeline key="favourites" title="Favourites" searchQuery="" favoritesOnly={true} onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
-            <Route path="/recent" element={<Timeline key="recent" title="Recently added" searchQuery="" sort="ingested_at" onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
-            <Route path="/videos" element={<Timeline key="videos" title="Videos" searchQuery="" videosOnly={true} onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
-            <Route path="/documents" element={<Timeline key="documents" title="Documents" searchQuery="document, receipt, id card, paperwork, text" onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
-            <Route path="/screenshots" element={<Timeline key="screenshots" title="Screenshots" searchQuery="screenshot, user interface, screen capture" onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
-            <Route path="/memes" element={<Timeline key="memes" title="Memes" searchQuery="meme, funny internet meme, comic" onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
-            <Route path="/quotes" element={<Timeline key="quotes" title="Quotes" searchQuery="quote, motivational, typography, text" onPhotoClick={handlePhotoClick} onTotalCountChange={() => {}} />} />
+            <Route path="/favourites" element={<Timeline key="favourites" title="Favourites" searchQuery="" favoritesOnly={true} onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/recent" element={<Timeline key="recent" title="Recently added" searchQuery="" sort="ingested_at" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/videos" element={<Timeline key="videos" title="Videos" searchQuery="" videosOnly={true} onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/documents" element={<Timeline key="documents" title="Documents" searchQuery="document, receipt, id card, paperwork, text" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/screenshots" element={<Timeline key="screenshots" title="Screenshots" searchQuery="screenshot, user interface, screen capture" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/memes" element={<Timeline key="memes" title="Memes" searchQuery="meme, funny internet meme, comic" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/quotes" element={<Timeline key="quotes" title="Quotes" searchQuery="quote, motivational, typography, text" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
 
             <Route path="*" element={
               <div className="flex flex-col items-center justify-center w-full h-full text-[var(--color-text-secondary)]">
@@ -358,14 +397,15 @@ export default function App() {
           const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
           const currentFile = progress?.current_file;
           const startTime = progress?.start_time;
-
+          const isML = scanInfo.path === 'AI Media Analysis';
+          
           const heading = isComplete
-            ? (isTakeout ? 'Takeout Import Complete' : 'Scan Complete')
+            ? (isML ? 'AI Analysis Complete' : isTakeout ? 'Takeout Import Complete' : 'Scan Complete')
             : isError
-              ? (isTakeout ? 'Takeout Import Failed' : 'Scan Failed')
+              ? (isML ? 'AI Analysis Failed' : isTakeout ? 'Takeout Import Failed' : 'Scan Failed')
               : data.status === 'pausing'
-                ? (isTakeout ? 'Pausing Takeout…' : 'Pausing Scan…')
-                : (isTakeout ? 'Importing Takeout…' : 'Scanning Directory…');
+                ? (isML ? 'Pausing AI Analysis…' : isTakeout ? 'Pausing Takeout…' : 'Pausing Scan…')
+                : (isML ? 'Analyzing Media…' : isTakeout ? 'Importing Takeout…' : 'Scanning Directory…');
 
           // Calculate ETA
           let etaText = '';
@@ -450,12 +490,16 @@ export default function App() {
                   )}
 
                   <div className="grid grid-cols-2 gap-1 text-[11px] text-white/60 pt-2 border-t border-white/5">
-                    <div>
-                      New: <span className="font-semibold text-emerald-400">{progress.new_inserted}</span>
-                    </div>
-                    <div>
-                      Dupes: <span className="font-semibold text-amber-400">{progress.duplicates_skipped}</span>
-                    </div>
+                    {!isML && (
+                      <>
+                        <div>
+                          New: <span className="font-semibold text-emerald-400">{progress.new_inserted}</span>
+                        </div>
+                        <div>
+                          Dupes: <span className="font-semibold text-amber-400">{progress.duplicates_skipped}</span>
+                        </div>
+                      </>
+                    )}
                     {progress.errors > 0 && (
                       <div className="col-span-2 text-rose-400">
                         Errors: {progress.errors}
