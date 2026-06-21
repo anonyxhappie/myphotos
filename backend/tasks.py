@@ -1,0 +1,332 @@
+"""
+Huey Background Task Queue
+===========================
+
+SQLite-backed task queue for offloading heavy work from the FastAPI
+request cycle.  Runs in a separate process via::
+
+    huey_consumer.py backend.tasks.huey -w 2 -k thread
+
+Tasks defined here:
+    • ``task_scan_directory``     — full directory scan + ingestion
+    • ``task_generate_thumbnails``— batch thumbnail generation for items
+                                    that were ingested without thumbnails
+    • ``task_parse_takeout``      — Google Takeout import
+"""
+
+from __future__ import annotations
+
+import logging
+
+from backend.celery_app import celery_app
+
+from backend.config import settings
+settings.setup_rotating_logging()
+from backend.db.engine import SessionLocal
+from backend.db.models import MediaItem
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+def write_task_progress(
+    task_id: str | None,
+    status: str,
+    total_found: int = 0,
+    processed: int = 0,
+    new_inserted: int = 0,
+    duplicates_skipped: int = 0,
+    errors: int = 0,
+    current_file: str | None = None,
+    start_time: float | None = None,
+    result: dict | None = None,
+    path: str | None = None,
+    mode: str | None = None,
+    generate_thumbs: bool | None = None,
+    error_message: str | None = None,
+) -> None:
+    from backend.services.task_control import write_task_progress as persist_progress
+
+    persist_progress(
+        task_id,
+        status,
+        total_found=total_found,
+        processed=processed,
+        new_inserted=new_inserted,
+        duplicates_skipped=duplicates_skipped,
+        errors=errors,
+        current_file=current_file,
+        start_time=start_time,
+        result=result,
+        path=path,
+        mode=mode,
+        generate_thumbs=generate_thumbs,
+        error_message=error_message,
+    )
+
+
+@celery_app.task
+def task_scan_directory(
+    root_path: str,
+    generate_thumbs: bool = True,
+    task_id: str | None = None,
+    resume_after: str | None = None,
+    initial_progress: dict | None = None,
+) -> dict:
+    """Background task: scan a directory and ingest media files.
+
+    Returns a dict summary of the scan result.
+    """
+    from backend.services.scanner import scan_directory
+    import time
+
+    start_time = (initial_progress or {}).get("start_time") or time.time()
+    logger.info("Starting background scan: %s", root_path)
+    write_task_progress(
+        task_id,
+        "running",
+        start_time=start_time,
+        path=root_path,
+        mode="scan",
+        generate_thumbs=generate_thumbs,
+    )
+
+    try:
+        with SessionLocal() as session:
+            result = scan_directory(
+                root_path,
+                session,
+                generate_thumbs=generate_thumbs,
+                task_id=task_id,
+                resume_after=resume_after,
+                initial_progress=initial_progress,
+            )
+
+        summary = {
+            "root_path": result.root_path,
+            "total_found": result.total_found,
+            "new_inserted": result.new_inserted,
+            "duplicates_skipped": result.duplicates_skipped,
+            "errors": result.errors,
+        }
+        if result.paused:
+            summary["paused"] = True
+            return summary
+
+        logger.info("Background scan complete: %s", summary)
+        write_task_progress(
+            task_id,
+            "complete",
+            total_found=result.total_found,
+            processed=result.total_found,
+            new_inserted=result.new_inserted,
+            duplicates_skipped=result.duplicates_skipped,
+            errors=result.errors,
+            start_time=start_time,
+            result=summary,
+        )
+        # Log completion to audit logs
+        from backend.db.engine import log_audit_entry
+        log_audit_entry(
+            "bulk_sync_complete",
+            "success",
+            f"Completed sync of {root_path}: found {result.total_found} files, inserted {result.new_inserted} new, skipped {result.duplicates_skipped} duplicates."
+        )
+
+        try:
+            task_process_ml_pipeline()
+        except Exception as ml_exc:
+            logger.warning("ML pipeline automatic trigger failed: %s", ml_exc)
+
+        return summary
+    except Exception as exc:
+        logger.exception("Background scan failed: %s", exc)
+        from backend.db.engine import log_audit_entry
+        log_audit_entry("sync_error", "error", f"Background scan failed for {root_path}: {exc}")
+        from backend.services.task_control import read_task_state
+
+        state = read_task_state(task_id) if task_id else None
+        progress = (state or {}).get("progress") or {}
+        write_task_progress(
+            task_id,
+            "error",
+            total_found=progress.get("total_found", 0),
+            processed=progress.get("processed", 0),
+            new_inserted=progress.get("new_inserted", 0),
+            duplicates_skipped=progress.get("duplicates_skipped", 0),
+            errors=progress.get("errors", 0),
+            current_file=progress.get("current_file"),
+            start_time=progress.get("start_time", start_time),
+            path=root_path,
+            mode="scan",
+            generate_thumbs=generate_thumbs,
+            error_message=str(exc),
+        )
+        raise exc
+
+
+@celery_app.task
+def task_generate_thumbnails(media_item_ids: list[str] | None = None) -> dict:
+    """Background task: generate missing thumbnails.
+
+    If ``media_item_ids`` is None, finds all items in the DB that are
+    missing thumbnails and generates them.
+    """
+    from backend.services.thumbnails import generate_thumbnails_batch
+
+    settings.ensure_cache_dirs()
+
+    with SessionLocal() as session:
+        if media_item_ids:
+            query = session.query(MediaItem).filter(MediaItem.id.in_(media_item_ids))
+        else:
+            # Find all image items missing thumbnails
+            query = session.query(MediaItem).filter(
+                MediaItem.thumb_path.is_(None),
+                MediaItem.mime_type.like("image/%"),
+            )
+
+        items = query.all()
+        if not items:
+            logger.info("No items need thumbnail generation")
+            return {"generated": 0, "total": 0}
+
+        # Build work list: (original_path, sha256)
+        work = [(item.original_path, item.sha256) for item in items]
+        results = generate_thumbnails_batch(work)
+
+        # Update DB with generated paths
+        updated = 0
+        for tr in results:
+            if tr.thumb_rel_path or tr.preview_rel_path:
+                item = session.query(MediaItem).filter(
+                    MediaItem.sha256 == tr.sha256
+                ).first()
+                if item:
+                    if tr.thumb_rel_path:
+                        item.thumb_path = tr.thumb_rel_path
+                    if tr.preview_rel_path:
+                        item.preview_path = tr.preview_rel_path
+                    updated += 1
+
+        session.commit()
+
+    summary = {"generated": updated, "total": len(items)}
+    logger.info("Thumbnail generation complete: %s", summary)
+    return summary
+
+
+@celery_app.task
+def task_parse_takeout(
+    takeout_root: str,
+    generate_thumbs: bool = True,
+    task_id: str | None = None,
+    resume_after: str | None = None,
+    initial_progress: dict | None = None,
+) -> dict:
+    """Background task: parse a Google Takeout export directory.
+
+    Returns a dict summary of the import result.
+    """
+    from backend.services.takeout import parse_takeout_directory
+    import time
+
+    start_time = (initial_progress or {}).get("start_time") or time.time()
+    logger.info("Starting Takeout import: %s", takeout_root)
+    write_task_progress(
+        task_id,
+        "running",
+        start_time=start_time,
+        path=takeout_root,
+        mode="takeout",
+        generate_thumbs=generate_thumbs,
+    )
+
+    try:
+        with SessionLocal() as session:
+            result = parse_takeout_directory(
+                takeout_root,
+                session,
+                generate_thumbs=generate_thumbs,
+                task_id=task_id,
+                resume_after=resume_after,
+                initial_progress=initial_progress,
+            )
+
+        summary = {
+            "root_path": result.root_path,
+            "total_found": result.total_found,
+            "new_inserted": result.new_inserted,
+            "duplicates_skipped": result.duplicates_skipped,
+            "errors": result.errors,
+        }
+        if result.paused:
+            summary["paused"] = True
+            return summary
+
+        logger.info("Takeout import complete: %s", summary)
+        write_task_progress(
+            task_id,
+            "complete",
+            total_found=result.total_found,
+            processed=result.total_found,
+            new_inserted=result.new_inserted,
+            duplicates_skipped=result.duplicates_skipped,
+            errors=result.errors,
+            start_time=start_time,
+            result=summary,
+        )
+        try:
+            task_process_ml_pipeline()
+        except Exception as ml_exc:
+            logger.warning("ML pipeline automatic trigger failed: %s", ml_exc)
+
+        return summary
+    except Exception as exc:
+        logger.exception("Takeout import failed: %s", exc)
+        from backend.services.task_control import read_task_state
+
+        state = read_task_state(task_id) if task_id else None
+        progress = (state or {}).get("progress") or {}
+        write_task_progress(
+            task_id,
+            "error",
+            total_found=progress.get("total_found", 0),
+            processed=progress.get("processed", 0),
+            new_inserted=progress.get("new_inserted", 0),
+            duplicates_skipped=progress.get("duplicates_skipped", 0),
+            errors=progress.get("errors", 0),
+            current_file=progress.get("current_file"),
+            start_time=progress.get("start_time", start_time),
+            path=takeout_root,
+            mode="takeout",
+            generate_thumbs=generate_thumbs,
+            error_message=str(exc),
+        )
+        raise exc
+
+
+@celery_app.task
+def task_process_ml_pipeline() -> dict:
+    """Background task: Process ML pipeline (embeddings, etc).
+    Runs in batches until no more unprocessed items exist.
+    """
+    from backend.services.ml import index_unprocessed_items
+    
+    logger.info("Starting ML pipeline processing...")
+    
+    total_processed = 0
+    with SessionLocal() as session:
+        while True:
+            result = index_unprocessed_items(session, batch_size=50)
+            processed = result.get("processed", 0)
+            total_processed += processed
+            
+            if result.get("status") == "idle" or processed == 0:
+                break
+                
+    summary = {"total_processed": total_processed}
+    logger.info("ML pipeline complete: %s", summary)
+    return summary

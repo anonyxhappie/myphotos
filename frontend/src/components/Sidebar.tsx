@@ -1,0 +1,234 @@
+import { useEffect, useState } from 'react';
+import { NavLink } from 'react-router-dom';
+import { fetchHealth } from '../api/client';
+
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+type IconName =
+  | 'photos'
+  | 'albums'
+  | 'heart'
+  | 'recent'
+  | 'videos'
+  | 'documents'
+  | 'screenshots'
+  | 'lock'
+  | 'settings';
+
+function BrandMark() {
+  return (
+    <svg width="30" height="30" viewBox="0 0 28 28" aria-hidden="true">
+      <circle cx="14" cy="7" r="6" fill="#ea4335" />
+      <circle cx="21" cy="14" r="6" fill="#fbbc04" />
+      <circle cx="14" cy="21" r="6" fill="#34a853" />
+      <circle cx="7" cy="14" r="6" fill="#4285f4" />
+      <circle cx="14" cy="14" r="3.25" fill="var(--color-bg-primary)" />
+    </svg>
+  );
+}
+
+function NavigationIcon({ name }: { name: IconName }) {
+  const common = {
+    width: 22,
+    height: 22,
+    viewBox: '0 0 24 24',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    fill: 'none',
+  };
+
+  if (name === 'photos') {
+    return (
+      <svg {...common}>
+        <rect x="3" y="3" width="18" height="18" rx="3" />
+        <circle cx="8.5" cy="8.5" r="1.5" />
+        <path d="m4 17 4.5-4.5 3.5 3 3-3 5 5" />
+      </svg>
+    );
+  }
+  if (name === 'albums') {
+    return (
+      <svg {...common}>
+        <rect x="4" y="4" width="16" height="16" rx="3" />
+        <path d="M8 2h8M8 22h8" />
+        <circle cx="9" cy="9" r="1.25" />
+        <path d="m5 17 4-4 3 2.5 2-2 5 4" />
+      </svg>
+    );
+  }
+  if (name === 'heart') {
+    return (
+      <svg {...common}>
+        <path d="M20.8 4.7a5.4 5.4 0 0 0-7.7 0L12 5.8l-1.1-1.1a5.4 5.4 0 0 0-7.7 7.7L12 21l8.8-8.6a5.4 5.4 0 0 0 0-7.7Z" />
+      </svg>
+    );
+  }
+  if (name === 'recent') {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3.5 2" />
+      </svg>
+    );
+  }
+  if (name === 'videos') {
+    return (
+      <svg {...common}>
+        <rect x="3" y="5" width="18" height="14" rx="3" />
+        <path d="m10 9 5 3-5 3Z" />
+      </svg>
+    );
+  }
+  if (name === 'documents') {
+    return (
+      <svg {...common}>
+        <path d="M6 3h8l4 4v14H6z" />
+        <path d="M14 3v5h5M9 12h6M9 16h6" />
+      </svg>
+    );
+  }
+  if (name === 'screenshots') {
+    return (
+      <svg {...common}>
+        <path d="M8 3H4a1 1 0 0 0-1 1v4M16 3h4a1 1 0 0 1 1 1v4M8 21H4a1 1 0 0 1-1-1v-4M16 21h4a1 1 0 0 0 1-1v-4" />
+        <rect x="7" y="7" width="10" height="10" rx="2" />
+      </svg>
+    );
+  }
+  if (name === 'lock') {
+    return (
+      <svg {...common}>
+        <rect x="4" y="10" width="16" height="11" rx="3" />
+        <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.85l.05.05-2.9 2.9-.05-.05A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21h-4v-.05A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.85.34l-.05.05-2.9-2.9.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3v-4h.05A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.85L4.2 7.1l2.9-2.9.05.05A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3h4v.05A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.85-.34l.05-.05 2.9 2.9-.05.05A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21v4h-.05A1.7 1.7 0 0 0 19.4 15Z" />
+    </svg>
+  );
+}
+
+const primaryItems: Array<{ to: string; label: string; icon: IconName; end?: boolean }> = [
+  { to: '/', label: 'Photos', icon: 'photos', end: true },
+  { to: '/albums', label: 'Albums', icon: 'albums' },
+];
+
+const libraryItems: Array<{ to: string; label: string; icon: IconName }> = [
+  { to: '/favourites', label: 'Favourites', icon: 'heart' },
+  { to: '/recent', label: 'Recently added', icon: 'recent' },
+  { to: '/videos', label: 'Videos', icon: 'videos' },
+  { to: '/documents', label: 'Documents', icon: 'documents' },
+  { to: '/screenshots', label: 'Screenshots', icon: 'screenshots' },
+];
+
+const utilityItems: Array<{ to: string; label: string; icon: IconName }> = [
+  { to: '/locked', label: 'Locked folder', icon: 'lock' },
+  { to: '/settings', label: 'Settings', icon: 'settings' },
+];
+
+function NavItem({
+  to,
+  label,
+  icon,
+  end,
+  onClick,
+}: {
+  to: string;
+  label: string;
+  icon: IconName;
+  end?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <NavLink to={to} end={end} className="sidebar-nav-item" onClick={onClick}>
+      <NavigationIcon name={icon} />
+      <span>{label}</span>
+    </NavLink>
+  );
+}
+
+export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const [totalVolumes, setTotalVolumes] = useState(0);
+
+  useEffect(() => {
+    fetchHealth()
+      .then((health) => setTotalVolumes(health.total_volumes))
+      .catch(() => undefined);
+  }, []);
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`sidebar-backdrop ${isOpen ? 'is-visible' : ''}`}
+        onClick={onClose}
+        aria-label="Close navigation"
+      />
+
+      <aside className={`app-sidebar ${isOpen ? 'is-open' : ''}`}>
+        <div className="sidebar-brand">
+          <BrandMark />
+          <span>MyPhotos</span>
+          <button type="button" className="icon-button sidebar-close-button" onClick={onClose} aria-label="Close navigation">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <nav className="sidebar-navigation" aria-label="Main navigation">
+          <div className="sidebar-nav-group">
+            {primaryItems.map((item) => (
+              <NavItem key={item.to} {...item} onClick={onClose} />
+            ))}
+          </div>
+
+          <div className="sidebar-section-label">Library</div>
+          <div className="sidebar-nav-group">
+            {libraryItems.map((item) => (
+              <NavItem key={item.to} {...item} onClick={onClose} />
+            ))}
+          </div>
+
+          <div className="sidebar-section-label">Manage</div>
+          <div className="sidebar-nav-group">
+            {utilityItems.map((item) => (
+              <NavItem key={item.to} {...item} onClick={onClose} />
+            ))}
+          </div>
+        </nav>
+
+        <div className="sidebar-storage">
+          <div className="storage-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <ellipse cx="12" cy="5" rx="8" ry="3" />
+              <path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" />
+            </svg>
+          </div>
+          <div>
+            <div className="storage-title">Local storage</div>
+            <div className="storage-caption">
+              {totalVolumes} volume{totalVolumes === 1 ? '' : 's'} connected
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+        <NavItem to="/" label="Photos" icon="photos" end />
+        <NavItem to="/albums" label="Albums" icon="albums" />
+        <NavItem to="/favourites" label="Favourites" icon="heart" />
+        <NavItem to="/settings" label="Settings" icon="settings" />
+      </nav>
+    </>
+  );
+}
