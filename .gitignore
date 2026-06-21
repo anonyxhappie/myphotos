@@ -55,6 +55,8 @@ Thumbs.db
 *.png
 *.jpg
 *.jpeg
+!screenshots/
+!screenshots/**
 !public/
 !assets/
 
