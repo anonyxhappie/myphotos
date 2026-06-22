@@ -7,6 +7,7 @@ import {
   getThumbUrl,
   toggleFavorite,
   toggleLock,
+  openInFinder,
 } from '../api/client';
 
 interface LightboxProps {
@@ -199,6 +200,15 @@ export default function Lightbox({
     }
   };
 
+  const handleOpenInFinder = async () => {
+    try {
+      await openInFinder(mediaId);
+    } catch (error) {
+      console.error('Failed to open in Finder:', error);
+      alert(error instanceof Error ? error.message : 'Failed to open in Finder');
+    }
+  };
+
   const handleTouchEnd = (event: React.TouchEvent) => {
     if (touchStartX.current === null) return;
     const distance = event.changedTouches[0].clientX - touchStartX.current;
@@ -210,9 +220,9 @@ export default function Lightbox({
 
   const showLoading = isVideo
     ? !originalLoaded && !videoFailed
-    : isGif
-      ? !originalLoaded && !originalFailed
-      : !previewLoaded && !originalLoaded && !originalFailed;
+    : originalAvailable
+      ? !(previewLoaded || originalLoaded) && !originalFailed
+      : !previewLoaded && !originalFailed;
   const fallbackUrl = hasPreview ? getPreviewUrl(mediaId) : getThumbUrl(mediaId);
 
   return (
@@ -243,6 +253,18 @@ export default function Lightbox({
                 <path d="M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
               </svg>
             </a>
+          )}
+          {originalAvailable && (
+            <button
+              className="lightbox-icon-button"
+              onClick={handleOpenInFinder}
+              aria-label="Open in Finder"
+              title="Open in Finder"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '20px', height: '20px' }}>
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
           )}
           <button
             className={`lightbox-icon-button ${detail?.is_favorite ? 'is-active is-favorite' : ''}`}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { triggerMLPipeline } from '../api/client';
 
@@ -7,6 +7,7 @@ interface HeaderProps {
   onScanClick: () => void;
   onSearch: (query: string) => void;
   onScanStarted?: (taskId: string, path: string, mode: 'scan' | 'takeout') => void;
+  searchQuery?: string;
 }
 
 function BrandMark() {
@@ -21,11 +22,15 @@ function BrandMark() {
   );
 }
 
-export default function Header({ onMenuClick, onScanClick, onSearch, onScanStarted }: HeaderProps) {
+export default function Header({ onMenuClick, onScanClick, onSearch, onScanStarted, searchQuery = '' }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [inputValue, setInputValue] = useState('');
   const [isIndexing, setIsIndexing] = useState(false);
+
+  useEffect(() => {
+    setInputValue(searchQuery);
+  }, [searchQuery]);
 
   const submitSearch = () => {
     onSearch(inputValue.trim());

@@ -49,8 +49,8 @@ class Settings:
     DEEPFACE_MODEL_NAME: str = "Facenet"
 
     # -- Thumbnail sizes ---------------------------------------------------
-    THUMB_SIZE: int = 256       # longest edge in pixels
-    THUMB_QUALITY: int = 80     # WebP quality (0-100)
+    THUMB_SIZE: int = 768       # longest edge in pixels
+    THUMB_QUALITY: int = 85     # WebP quality (0-100)
     PREVIEW_SIZE: int = 1080    # longest edge in pixels
     PREVIEW_QUALITY: int = 85   # WebP quality (0-100)
 

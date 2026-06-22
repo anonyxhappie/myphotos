@@ -57,11 +57,11 @@ export async function fetchMediaDetail(id: string): Promise<MediaItemDetail> {
 // ─── URL builders (no fetch, just returns the URL) ──────────────
 
 export function getThumbUrl(id: string): string {
-  return `${BASE}/media/${id}/thumb`;
+  return `${BASE}/media/${id}/thumb?v=2`;
 }
 
 export function getPreviewUrl(id: string): string {
-  return `${BASE}/media/${id}/preview`;
+  return `${BASE}/media/${id}/preview?v=2`;
 }
 
 export function getOriginalUrl(id: string): string {
@@ -220,6 +220,12 @@ export async function bulkDeleteMedia(mediaIds: string[]): Promise<{status: stri
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ media_ids: mediaIds }),
+  });
+}
+
+export async function openInFinder(mediaId: string): Promise<{status: string}> {
+  return fetchJson<{status: string}>(`${BASE}/media/${mediaId}/open-in-finder`, {
+    method: 'POST',
   });
 }
 

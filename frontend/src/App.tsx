@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import type { MediaItemSummary, ScanStatusResponse } from './api/types';
 import { fetchTimeline, fetchScans, pauseScan } from './api/client';
 import Header from './components/Header';
@@ -22,6 +22,7 @@ import TagViewPage from './pages/TagViewPage';
 
 export default function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [totalCount, setTotalCount] = useState(0);
   const [totalSize, setTotalSize] = useState(0);
   const [isLibraryLoading, setIsLibraryLoading] = useState(true);
@@ -31,6 +32,23 @@ export default function App() {
   const [showScan, setShowScan] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const activeSearchQuery = useMemo(() => {
+    switch (location.pathname) {
+      case '/documents':
+        return 'document, receipt, id card, paperwork, text';
+      case '/screenshots':
+        return 'screenshot, user interface, screen capture';
+      case '/memes':
+        return 'meme, funny internet meme, comic';
+      case '/quotes':
+        return 'quote, motivational, typography, text';
+      case '/':
+        return searchQuery;
+      default:
+        return '';
+    }
+  }, [location.pathname, searchQuery]);
   const [timelineKey, setTimelineKey] = useState(0);
   const [galleryRefreshToken, setGalleryRefreshToken] = useState(0);
   const [activePerson, setActivePerson] = useState<PersonResponse | null>(null);
@@ -243,6 +261,7 @@ export default function App() {
         onClose={() => setIsSidebarOpen(false)} 
         currentCount={totalCount}
         currentSize={totalSize}
+        onPhotosClick={() => handleSearch('')}
       />
 
       <div className="app-content">
@@ -251,6 +270,7 @@ export default function App() {
           onScanClick={() => setShowScan(true)}
           onSearch={handleSearch}
           onScanStarted={handleScanStarted}
+          searchQuery={activeSearchQuery}
         />
 
         <main className="app-main">

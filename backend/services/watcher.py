@@ -16,7 +16,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
 
 from backend.db.engine import SessionLocal
-from backend.db.models import SyncedDirectory
+from backend.db.models import SyncedDirectory, MediaItem
 from backend.services.scanner import scan_file
 from backend.config import settings
 

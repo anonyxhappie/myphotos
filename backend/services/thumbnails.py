@@ -157,17 +157,53 @@ def generate_preview(original_path: str | Path, sha256: str) -> Optional[str]:
             img = _extract_video_frame(original_path)
             if not img:
                 return None
+            with img:
+                img.thumbnail(
+                    (settings.PREVIEW_SIZE, settings.PREVIEW_SIZE),
+                    Image.Resampling.LANCZOS,
+                )
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                img.save(out_path, format="WEBP", quality=settings.PREVIEW_QUALITY)
         else:
             img = Image.open(original_path)
-
-        with img:
-            img.thumbnail(
-                (settings.PREVIEW_SIZE, settings.PREVIEW_SIZE),
-                Image.Resampling.LANCZOS,
-            )
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.save(out_path, format="WEBP", quality=settings.PREVIEW_QUALITY)
+            is_animated_gif = ext == ".gif" and getattr(img, "is_animated", False)
+            if is_animated_gif:
+                from PIL import ImageSequence
+                frames = []
+                durations = []
+                with img:
+                    for frame in ImageSequence.Iterator(img):
+                        frame_copy = frame.copy()
+                        if frame_copy.mode in ("RGBA", "P"):
+                            frame_copy = frame_copy.convert("RGBA")
+                        else:
+                            frame_copy = frame_copy.convert("RGB")
+                        frame_copy.thumbnail(
+                            (settings.PREVIEW_SIZE, settings.PREVIEW_SIZE),
+                            Image.Resampling.LANCZOS,
+                        )
+                        frames.append(frame_copy)
+                        durations.append(frame.info.get("duration", 100))
+                if frames:
+                    frames[0].save(
+                        out_path,
+                        format="WEBP",
+                        save_all=True,
+                        append_images=frames[1:],
+                        duration=durations,
+                        loop=0,
+                        quality=settings.PREVIEW_QUALITY,
+                    )
+            else:
+                with img:
+                    img.thumbnail(
+                        (settings.PREVIEW_SIZE, settings.PREVIEW_SIZE),
+                        Image.Resampling.LANCZOS,
+                    )
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    img.save(out_path, format="WEBP", quality=settings.PREVIEW_QUALITY)
 
         return str(out_path.relative_to(settings.CACHE_DIR))
 

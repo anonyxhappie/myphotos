@@ -7,6 +7,7 @@ interface SidebarProps {
   onClose: () => void;
   currentCount?: number;
   currentSize?: number;
+  onPhotosClick?: () => void;
 }
 
 function formatBytes(bytes: number) {
@@ -193,7 +194,7 @@ function NavItem({
   );
 }
 
-export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize = 0 }: SidebarProps) {
+export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize = 0, onPhotosClick }: SidebarProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(true);
   const [albumsExpanded, setAlbumsExpanded] = useState(true);
@@ -236,7 +237,7 @@ export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize
 
         <nav className="sidebar-navigation" aria-label="Main navigation">
           <div className="sidebar-nav-group">
-            <NavItem to="/" label="Photos" icon="photos" end onClick={onClose} />
+            <NavItem to="/" label="Photos" icon="photos" end onClick={() => { onPhotosClick?.(); onClose(); }} />
             
             <div className="sidebar-albums-section">
               <div className="sidebar-nav-item-wrapper">
@@ -384,7 +385,7 @@ export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize
       </aside>
 
       <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-        <NavItem to="/" label="Photos" icon="photos" end />
+        <NavItem to="/" label="Photos" icon="photos" end onClick={onPhotosClick} />
         <NavItem to="/albums" label="Albums" icon="albums" />
         <NavItem to="/folders" label="Folders" icon="folders" />
         <NavItem to="/settings" label="Settings" icon="settings" />

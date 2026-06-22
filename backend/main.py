@@ -368,7 +368,16 @@ def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
             except Exception:
                 pass
         
-        # 2. Delete database record
+        # 2. Delete original file on disk
+        if item.original_path:
+            try:
+                original_file = Path(item.original_path)
+                if original_file.exists():
+                    original_file.unlink()
+            except Exception as e:
+                logger.warning("Failed to delete original file %s: %s", item.original_path, e)
+        
+        # 3. Delete database record
         db.delete(item)
         
     # Commit SQLite deletion
@@ -448,7 +457,16 @@ def get_original(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
         raise HTTPException(404, "Media item not found")
 
     full_path = Path(item.original_path)
-    if not full_path.is_file():
+    try:
+        # Check readability to catch macOS TCC / permission issues early
+        with open(full_path, "rb") as f:
+            pass
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied by macOS. Please grant Full Disk Access to your Terminal/IDE in System Settings."
+        )
+    except Exception:
         raise HTTPException(404, "Original file is currently unavailable")
 
     guessed_type, _ = mimetypes.guess_type(full_path.name)
@@ -464,6 +482,27 @@ def get_original(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@app.post("/api/media/{media_id}/open-in-finder")
+def open_in_finder(media_id: str, db: Session = Depends(get_db)):
+    """Open the original media file in macOS Finder (revealed and highlighted)."""
+    item = db.get(MediaItem, media_id)
+    if not item:
+        raise HTTPException(404, "Media item not found")
+
+    full_path = Path(item.original_path)
+    if not full_path.exists():
+        raise HTTPException(404, "Original file is offline or unavailable")
+
+    import subprocess
+    try:
+        # open -R reveals the file in Finder on macOS
+        subprocess.run(["open", "-R", str(full_path)], check=True)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error("Failed to open in Finder: %s", e)
+        raise HTTPException(500, f"Failed to open in Finder: {e}")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -1315,7 +1354,7 @@ def get_tag_media(tag_id: str, db: Session = Depends(get_db)):
     sort_col = func.coalesce(
         MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
     )
-    items = tag.media_items.order_by(sort_col.desc(), MediaItem.id.desc()).all()
+    items = tag.media_items.options(joinedload(MediaItem.volume)).order_by(sort_col.desc(), MediaItem.id.desc()).all()
     
     summaries = []
     for item in items:
