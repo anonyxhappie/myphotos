@@ -121,6 +121,9 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
     records = []
     processed_count = 0
     
+    faces_found = 0
+    labels_found = 0
+    
     model, preprocess, tokenizer = get_clip_components()
     device = next(model.parameters()).device
     
@@ -145,6 +148,7 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
                         tag = get_or_create_tag(db, word, "ai_ocr")
                         if tag not in item.tags:
                             item.tags.append(tag)
+                            labels_found += 1
                 except Exception as e:
                     logger.warning(f"OCR failed for {item.original_path}: {e}")
                     
@@ -156,6 +160,7 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
                         tag = get_or_create_tag(db, "Face", "ai_deepface")
                         if tag not in item.tags:
                             item.tags.append(tag)
+                            labels_found += 1
                         
                         # Generate and store embeddings for each face
                         resnet = get_resnet()
@@ -180,6 +185,7 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
                                 )
                                 db.add(sql_face)
                                 db.flush() # get ID
+                                faces_found += 1
                                 
                                 # 2. Add to LanceDB records
                                 face_records.append({
@@ -213,6 +219,7 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
                             tag = get_or_create_tag(db, label.capitalize(), "ai_clip")
                             if tag not in item.tags:
                                 item.tags.append(tag)
+                                labels_found += 1
                 
                 vector = image_features.cpu().numpy()[0].tolist()
                 records.append({
@@ -231,7 +238,7 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
     
     db.commit()
         
-    return {"processed": processed_count, "status": "active"}
+    return {"processed": processed_count, "status": "active", "faces_found": faces_found, "labels_found": labels_found}
 
 def search_semantic(query: str, limit: int = 50) -> List[str]:
     """Search for media items using a text query."""

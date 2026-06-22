@@ -25,19 +25,17 @@ export default function FolderDetail({ onPhotoClick, onTotalCountChange }: Folde
 
   return (
     <div className="w-full h-full flex flex-col relative">
-      <div className="px-8 py-6 flex items-center justify-between shrink-0 border-b border-white/5 bg-[var(--color-bg-primary)] z-10 sticky top-0">
-        <div className="flex items-center gap-4">
+      <div className="timeline-toolbar">
+        <div className="timeline-heading flex items-center gap-4">
           <button 
             onClick={() => navigate('/folders')}
-            className="btn-ghost text-[var(--color-text-secondary)] hover:text-white"
+            className="text-[var(--color-text-secondary)] hover:text-white flex items-center"
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
-          <h2 className="text-xl font-medium tracking-tight text-[var(--color-text-primary)]">
-            {folder ? (folder.path.split('/').pop() || folder.path) : 'Folder'}
-          </h2>
+          <h1>{folder ? (folder.path.split('/').pop() || folder.path) : 'Folder'}</h1>
         </div>
       </div>
 
@@ -45,6 +43,7 @@ export default function FolderDetail({ onPhotoClick, onTotalCountChange }: Folde
         <Timeline 
           searchQuery="" 
           dirId={id}
+          hideHeader={true}
           onPhotoClick={onPhotoClick} 
           onTotalCountChange={onTotalCountChange} 
         />

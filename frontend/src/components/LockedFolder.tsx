@@ -27,6 +27,7 @@ export default function LockedFolder({ onPhotoClick, onTotalCountChange }: Locke
   if (isAuthenticated) {
     return (
       <Timeline 
+        title="Locked folder"
         searchQuery="" 
         lockedOnly={true} 
         onPhotoClick={onPhotoClick} 

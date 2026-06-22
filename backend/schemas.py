@@ -174,6 +174,8 @@ class ScanProgress(BaseModel):
     new_inserted: int = 0
     duplicates_skipped: int = 0
     errors: int = 0
+    faces_found: Optional[int] = 0
+    labels_found: Optional[int] = 0
     current_file: Optional[str] = None
     start_time: Optional[float] = None
 
@@ -196,6 +198,7 @@ class ScanEnqueuedResponse(BaseModel):
 
     task_id: str
     message: str = "Scan task enqueued"
+    path: Optional[str] = None
 
 # ---------------------------------------------------------------------------
 # Synced Directories
@@ -262,6 +265,7 @@ class PersonResponse(BaseModel):
     id: str
     name: str
     cover_media_id: Optional[str] = None
+    cover_face_id: Optional[str] = None
     face_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)

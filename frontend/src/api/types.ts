@@ -93,6 +93,7 @@ export interface VolumeResponse {
 export interface ScanEnqueuedResponse {
   task_id: string;
   message: string;
+  path?: string;
 }
 
 export interface ScanProgress {
@@ -101,6 +102,8 @@ export interface ScanProgress {
   new_inserted: number;
   duplicates_skipped: number;
   errors: number;
+  faces_found?: number;
+  labels_found?: number;
   current_file?: string | null;
   start_time?: number | null;
 }

@@ -6,6 +6,7 @@ interface HeaderProps {
   onMenuClick: () => void;
   onScanClick: () => void;
   onSearch: (query: string) => void;
+  onScanStarted?: (taskId: string, path: string, mode: 'scan' | 'takeout') => void;
 }
 
 function BrandMark() {
@@ -20,7 +21,7 @@ function BrandMark() {
   );
 }
 
-export default function Header({ onMenuClick, onScanClick, onSearch }: HeaderProps) {
+export default function Header({ onMenuClick, onScanClick, onSearch, onScanStarted }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [inputValue, setInputValue] = useState('');
@@ -33,7 +34,10 @@ export default function Header({ onMenuClick, onScanClick, onSearch }: HeaderPro
   const handleStartML = async () => {
     setIsIndexing(true);
     try {
-      await triggerMLPipeline();
+      const res = await triggerMLPipeline();
+      if (res.task_id && onScanStarted) {
+        onScanStarted(res.task_id, 'AI Media Analysis', 'scan');
+      }
     } catch (error) {
       console.error(error);
     } finally {

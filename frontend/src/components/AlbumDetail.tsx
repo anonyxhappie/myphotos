@@ -31,23 +31,21 @@ export default function AlbumDetail({ onPhotoClick, onTotalCountChange }: AlbumD
 
   return (
     <div className="w-full h-full flex flex-col relative">
-      <div className="px-8 py-6 flex items-center justify-between shrink-0 border-b border-white/5 bg-[var(--color-bg-primary)] z-10 sticky top-0">
-        <div className="flex items-center gap-4">
+      <div className="timeline-toolbar">
+        <div className="timeline-heading flex items-center gap-4">
           <button 
             onClick={() => navigate('/albums')}
-            className="btn-ghost text-[var(--color-text-secondary)] hover:text-white"
+            className="text-[var(--color-text-secondary)] hover:text-white flex items-center"
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </button>
-          <h2 className="text-xl font-medium tracking-tight text-[var(--color-text-primary)]">
-            {album ? album.title : 'Album'}
-          </h2>
+          <h1>{album ? album.title : 'Album'}</h1>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="bg-[var(--color-accent)] text-white px-4 py-2 rounded-lg font-medium hover:bg-opacity-90 transition-opacity text-sm flex items-center gap-2"
+          className="outlined-action-button"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="12" y1="5" x2="12" y2="19" />
@@ -62,6 +60,7 @@ export default function AlbumDetail({ onPhotoClick, onTotalCountChange }: AlbumD
           key={timelineKey}
           searchQuery="" 
           albumId={id}
+          hideHeader={true}
           onPhotoClick={onPhotoClick} 
           onTotalCountChange={onTotalCountChange} 
         />

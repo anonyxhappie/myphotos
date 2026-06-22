@@ -17,6 +17,7 @@ interface TimelineProps {
   petsOnly?: boolean;
   sort?: string;
   refreshToken?: number;
+  hideHeader?: boolean;
   onPhotoClick: (item: MediaItemSummary, list: MediaItemSummary[]) => void;
   onTotalCountChange: (count: number, size: number) => void;
 }
@@ -223,6 +224,7 @@ export default function Timeline({
   petsOnly = false,
   sort = "date_taken",
   refreshToken = 0,
+  hideHeader = false,
   onPhotoClick, 
   onTotalCountChange 
 }: TimelineProps) {
@@ -413,42 +415,44 @@ export default function Timeline({
 
   return (
     <div className="timeline-view">
-      <div className="timeline-toolbar">
-        <div className="timeline-heading">
-          <h1>{title || (searchQuery ? 'Search results' : 'Photos')}</h1>
-          <div className="flex items-center gap-4">
-            <span>
-              {resultCount.toLocaleString()} {resultCount === 1 ? 'item' : 'items'}
-            </span>
-            {dirId && resultCount > 0 && (
-              <button 
-                onClick={() => {
-                  setSelectedIds(new Set()); // ensure no selected ids when passing dirId
-                  setShowAddToAlbum(true);
-                }}
-                className="bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white px-3 py-1 rounded-md text-sm font-medium transition-colors border border-[var(--color-accent)]/20"
-              >
-                Add all to Album
-              </button>
-            )}
+      {!hideHeader && (
+        <div className="timeline-toolbar">
+          <div className="timeline-heading">
+            <h1>{title || (searchQuery ? 'Search results' : 'Photos')}</h1>
+            <div className="flex items-center gap-4">
+              <span>
+                {resultCount.toLocaleString()} {resultCount === 1 ? 'item' : 'items'}
+              </span>
+              {dirId && resultCount > 0 && (
+                <button 
+                  onClick={() => {
+                    setSelectedIds(new Set()); // ensure no selected ids when passing dirId
+                    setShowAddToAlbum(true);
+                  }}
+                  className="bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white px-3 py-1 rounded-md text-sm font-medium transition-colors border border-[var(--color-accent)]/20"
+                >
+                  Add all to Album
+                </button>
+              )}
+            </div>
           </div>
-        </div>
 
-        {items.length > 0 && (
-          <div className="grouping-control" aria-label="Group photos by date range">
-          {(['day', 'week', 'month', 'year'] as GroupingMode[]).map(mode => (
-            <button
-              key={mode}
-              onClick={() => setGrouping(mode)}
-              className={grouping === mode ? 'is-active' : ''}
-              aria-pressed={grouping === mode}
-            >
-              {mode}
-            </button>
-          ))}
-          </div>
-        )}
-      </div>
+          {items.length > 0 && (
+            <div className="grouping-control" aria-label="Group photos by date range">
+            {(['day', 'week', 'month', 'year'] as GroupingMode[]).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setGrouping(mode)}
+                className={grouping === mode ? 'is-active' : ''}
+                aria-pressed={grouping === mode}
+              >
+                {mode}
+              </button>
+            ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {hasLoadedOnce && items.length === 0 ? (
         <div className="timeline-empty-state">

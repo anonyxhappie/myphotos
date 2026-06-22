@@ -248,6 +248,7 @@ export default function App() {
           onMenuClick={() => setIsSidebarOpen(true)}
           onScanClick={() => setShowScan(true)}
           onSearch={handleSearch}
+          onScanStarted={handleScanStarted}
         />
 
         <main className="app-main">
@@ -490,13 +491,22 @@ export default function App() {
                   )}
 
                   <div className="grid grid-cols-2 gap-1 text-[11px] text-white/60 pt-2 border-t border-white/5">
-                    {!isML && (
+                    {!isML ? (
                       <>
                         <div>
                           New: <span className="font-semibold text-emerald-400">{progress.new_inserted}</span>
                         </div>
                         <div>
                           Dupes: <span className="font-semibold text-amber-400">{progress.duplicates_skipped}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          Faces: <span className="font-semibold text-indigo-400">{progress.faces_found || 0}</span>
+                        </div>
+                        <div>
+                          Labels: <span className="font-semibold text-purple-400">{progress.labels_found || 0}</span>
                         </div>
                       </>
                     )}

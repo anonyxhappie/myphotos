@@ -23,6 +23,8 @@ imagehash>=4.3.1                # perceptual hashing (pHash)
 
 # -- AI / ML (Phase 3 — install later for a lighter Phase 1) ---------------
 lancedb>=0.6.0
+pylance
+pandas
 open-clip-torch>=2.24.0
 torch>=2.2.0
 facenet-pytorch>=2.5.3
