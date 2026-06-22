@@ -198,12 +198,11 @@ def task_generate_thumbnails(media_item_ids: list[str] | None = None) -> dict:
         results = generate_thumbnails_batch(work)
 
         # Update DB with generated paths
+        item_by_sha256 = {item.sha256: item for item in items}
         updated = 0
         for tr in results:
             if tr.thumb_rel_path or tr.preview_rel_path:
-                item = session.query(MediaItem).filter(
-                    MediaItem.sha256 == tr.sha256
-                ).first()
+                item = item_by_sha256.get(tr.sha256)
                 if item:
                     if tr.thumb_rel_path:
                         item.thumb_path = tr.thumb_rel_path
