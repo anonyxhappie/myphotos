@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from backend.config import settings
 from backend.db.engine import get_db, log_audit_entry
@@ -1186,7 +1186,7 @@ def get_album_media(album_id: str, db: Session = Depends(get_db)):
     sort_col = func.coalesce(
         MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
     )
-    items = album.media_items.order_by(sort_col.desc(), MediaItem.id.desc()).all()
+    items = album.media_items.options(joinedload(MediaItem.volume)).order_by(sort_col.desc(), MediaItem.id.desc()).all()
     
     summaries = []
     for item in items:
