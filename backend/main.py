@@ -16,14 +16,7 @@ import mimetypes
 from pathlib import Path
 from typing import Optional
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    HTTPException,
-    Query,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
@@ -61,7 +54,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-
 # ---------------------------------------------------------------------------
 # WebSocket Connection Manager & Redis Pub/Sub Listener
 # ---------------------------------------------------------------------------
@@ -84,9 +76,7 @@ class ConnectionManager:
             except Exception:
                 pass
 
-
 manager = ConnectionManager()
-
 
 async def redis_pubsub_listener():
     import os
@@ -103,9 +93,7 @@ async def redis_pubsub_listener():
             logger.info("Subscribed to Redis scan_progress Pub/Sub channel")
 
             while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message is not None:
                     data = message["data"]
                     if isinstance(data, bytes):
@@ -117,7 +105,6 @@ async def redis_pubsub_listener():
         except Exception as e:
             logger.error("Redis Pub/Sub listener error, reconnecting in 5s: %s", e)
             await asyncio.sleep(5)
-
 
 # CORS – allow the React/Vite dev server
 app.add_middleware(
@@ -138,35 +125,27 @@ def _on_startup() -> None:
     Base.metadata.create_all(bind=engine)
     settings.ensure_cache_dirs()
     logger.info("MyPhotos API ready — DB at %s", engine.url)
-
+    
     # Start Redis Pub/Sub background listener
     import asyncio
-
     asyncio.create_task(redis_pubsub_listener())
 
     # Start directory watcher
     from backend.services.watcher import watcher_service
-
     watcher_service.start()
-
 
 @app.on_event("shutdown")
 def _on_shutdown() -> None:
     from backend.services.watcher import watcher_service
-
     watcher_service.stop()
-
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  Timeline Endpoint                                                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-
 @app.get("/api/timeline", response_model=TimelineResponse)
 def get_timeline(
-    cursor: Optional[str] = Query(
-        None, description="ISO datetime cursor from previous page"
-    ),
+    cursor: Optional[str] = Query(None, description="ISO datetime cursor from previous page"),
     limit: int = Query(settings.TIMELINE_PAGE_SIZE, ge=1, le=500),
     favorites_only: bool = Query(False),
     videos_only: bool = Query(False),
@@ -190,14 +169,13 @@ def get_timeline(
 
     if favorites_only:
         query = query.where(MediaItem.is_favorite == True)
-
+    
     if videos_only:
         query = query.where(MediaItem.mime_type.like("video/%"))
 
     if dir_id:
         from backend.db.models import SyncedDirectory
         import os
-
         directory = db.get(SyncedDirectory, dir_id)
         if directory:
             path_prefix = directory.path
@@ -210,9 +188,7 @@ def get_timeline(
     # Total count (respecting filters)
     count_query = query.with_only_columns(func.count(MediaItem.id)).order_by(None)
     total = db.scalar(count_query)
-    size_query = query.with_only_columns(func.sum(MediaItem.file_size_bytes)).order_by(
-        None
-    )
+    size_query = query.with_only_columns(func.sum(MediaItem.file_size_bytes)).order_by(None)
     total_size = db.scalar(size_query) or 0
 
     # Order By
@@ -228,19 +204,17 @@ def get_timeline(
     # Apply cursor filter
     if cursor:
         from datetime import datetime
-
         try:
             cursor_dt = datetime.fromisoformat(cursor)
         except ValueError:
             raise HTTPException(400, f"Invalid cursor format: {cursor}")
-
+        
         query = query.where(
-            (sort_col < cursor_dt) | ((sort_col == cursor_dt) & (MediaItem.id < cursor))
+            (sort_col < cursor_dt)
+            | ((sort_col == cursor_dt) & (MediaItem.id < cursor))
         )
 
-    query = query.limit(
-        limit + 1
-    )  # Fetch one extra to determine if there's a next page
+    query = query.limit(limit + 1)  # Fetch one extra to determine if there's a next page
     rows = db.execute(query).scalars().all()
 
     # Determine next cursor
@@ -256,15 +230,9 @@ def get_timeline(
     volume_ids = {item.volume_id for item in items if item.volume_id}
     online_volumes: set[str] = set()
     if volume_ids:
-        online_rows = (
-            db.execute(
-                select(Volume.id).where(
-                    Volume.id.in_(volume_ids), Volume.is_online.is_(True)
-                )
-            )
-            .scalars()
-            .all()
-        )
+        online_rows = db.execute(
+            select(Volume.id).where(Volume.id.in_(volume_ids), Volume.is_online.is_(True))
+        ).scalars().all()
         online_volumes = set(online_rows)
 
     # Map to response models
@@ -299,7 +267,6 @@ def get_timeline(
 # ║  Media Detail                                                           ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-
 @app.get("/api/media/{media_id}", response_model=MediaItemDetail)
 def get_media_detail(media_id: str, db: Session = Depends(get_db)) -> MediaItemDetail:
     """Return full metadata for a single media item.
@@ -332,14 +299,16 @@ def get_media_detail(media_id: str, db: Session = Depends(get_db)) -> MediaItemD
         offline_message = "The original file is currently unavailable."
 
     return MediaItemDetail(
-        **{c.key: getattr(item, c.key) for c in item.__table__.columns},
+        **{
+            c.key: getattr(item, c.key)
+            for c in item.__table__.columns
+        },
         is_online=is_online,
         original_available=original_available,
         volume_label=volume_label,
         offline_message=offline_message,
         tags=item.tags,
     )
-
 
 @app.post("/api/media/{media_id}/favorite", response_model=MediaItemSummary)
 def toggle_favorite(media_id: str, db: Session = Depends(get_db)):
@@ -351,7 +320,6 @@ def toggle_favorite(media_id: str, db: Session = Depends(get_db)):
     db.commit()
     return MediaItemSummary.model_validate(item)
 
-
 @app.post("/api/media/{media_id}/lock", response_model=MediaItemSummary)
 def toggle_lock(media_id: str, db: Session = Depends(get_db)):
     """Toggle the locked status of a media item."""
@@ -362,18 +330,17 @@ def toggle_lock(media_id: str, db: Session = Depends(get_db)):
     db.commit()
     return MediaItemSummary.model_validate(item)
 
-
 @app.post("/api/media/delete")
 def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
     """Bulk delete media items from database, cache files, and LanceDB vectors."""
     from backend.db.vector import get_clip_table, get_face_table
-
+    
     if not req.media_ids:
         return {"status": "success", "deleted_count": 0}
-
+        
     items = db.query(MediaItem).filter(MediaItem.id.in_(req.media_ids)).all()
     deleted_count = len(items)
-
+    
     for item in items:
         # 1. Delete generated thumbnails/previews
         if item.thumb_path:
@@ -386,41 +353,34 @@ def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
                 (settings.CACHE_DIR / item.preview_path).unlink(missing_ok=True)
             except Exception:
                 pass
-
+        
         # 2. Delete database record
         db.delete(item)
-
+        
     # Commit SQLite deletion
     db.commit()
-
+    
     # 3. Delete from LanceDB vector index
     try:
         clip_table = get_clip_table()
         # LanceDB SQL filter syntax
-        clip_table.delete(
-            f"media_id in {tuple(req.media_ids) if len(req.media_ids) > 1 else f'(\"{req.media_ids[0]}\")'}"
-        )
+        clip_table.delete(f"media_id in {tuple(req.media_ids) if len(req.media_ids) > 1 else f'(\"{req.media_ids[0]}\")'}")
     except Exception as e:
-        logger.warning("Failed to delete from clip vector table: %s", e)
-
+         logger.warning("Failed to delete from clip vector table: %s", e)
+         
     try:
         face_table = get_face_table()
-        face_table.delete(
-            f"media_id in {tuple(req.media_ids) if len(req.media_ids) > 1 else f'(\"{req.media_ids[0]}\")'}"
-        )
+        face_table.delete(f"media_id in {tuple(req.media_ids) if len(req.media_ids) > 1 else f'(\"{req.media_ids[0]}\")'}")
     except Exception as e:
-        logger.warning("Failed to delete from face vector table: %s", e)
-
-    log_audit_entry(
-        "file_deleted", "warning", f"Bulk deleted {deleted_count} media item(s)"
-    )
+         logger.warning("Failed to delete from face vector table: %s", e)
+         
+    log_audit_entry("file_deleted", "warning", f"Bulk deleted {deleted_count} media item(s)")
     return {"status": "success", "deleted_count": deleted_count}
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  Thumbnail / Preview Serving                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
-
 
 @app.get("/api/media/{media_id}/thumb")
 def get_thumbnail(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
@@ -496,7 +456,6 @@ def get_original(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
 # ║  Volumes                                                                ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-
 @app.get("/api/volumes", response_model=list[VolumeResponse])
 def list_volumes(db: Session = Depends(get_db)) -> list[VolumeResponse]:
     """List all tracked storage volumes with online/offline status."""
@@ -520,7 +479,6 @@ def sync_volumes(db: Session = Depends(get_db)) -> list[VolumeResponse]:
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  Scan Endpoints                                                         ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
-
 
 @app.get("/api/select-folder")
 def select_folder() -> dict:
@@ -572,9 +530,7 @@ def enqueue_scan(req: ScanRequest) -> ScanEnqueuedResponse:
         generate_thumbs=req.generate_thumbs,
     )
     task_scan_directory.delay(str(scan_path), req.generate_thumbs, task_id=task_id)
-    return ScanEnqueuedResponse(
-        task_id=task_id, message=f"Scan enqueued for {scan_path}"
-    )
+    return ScanEnqueuedResponse(task_id=task_id, message=f"Scan enqueued for {scan_path}", path=str(scan_path))
 
 
 @app.post("/api/scan/takeout", response_model=ScanEnqueuedResponse)
@@ -598,9 +554,7 @@ def enqueue_takeout(req: TakeoutRequest) -> ScanEnqueuedResponse:
         generate_thumbs=req.generate_thumbs,
     )
     task_parse_takeout.delay(str(takeout_path), req.generate_thumbs, task_id=task_id)
-    return ScanEnqueuedResponse(
-        task_id=task_id, message=f"Takeout import enqueued for {takeout_path}"
-    )
+    return ScanEnqueuedResponse(task_id=task_id, message=f"Takeout import enqueued for {takeout_path}", path=str(takeout_path))
 
 
 @app.websocket("/api/ws/scan-progress")
@@ -651,11 +605,7 @@ def list_scans(include_complete: bool = Query(False)) -> list[ScanStatusResponse
 @app.post("/api/scan/{task_id}/pause", response_model=ScanStatusResponse)
 def pause_scan(task_id: str) -> ScanStatusResponse:
     """Request a cooperative pause at the next file boundary."""
-    from backend.services.task_control import (
-        read_task_state,
-        request_pause,
-        write_task_progress,
-    )
+    from backend.services.task_control import read_task_state, request_pause, write_task_progress
 
     state = read_task_state(task_id)
     if not state:
@@ -669,11 +619,7 @@ def pause_scan(task_id: str) -> ScanStatusResponse:
 
 
 def _requeue_scan(task_id: str, *, retry: bool) -> ScanStatusResponse:
-    from backend.services.task_control import (
-        clear_task_control,
-        read_task_state,
-        write_task_progress,
-    )
+    from backend.services.task_control import clear_task_control, read_task_state, write_task_progress
     from backend.tasks import task_parse_takeout, task_scan_directory
 
     state = read_task_state(task_id)
@@ -703,19 +649,15 @@ def _requeue_scan(task_id: str, *, retry: bool) -> ScanStatusResponse:
         mode=mode,
         generate_thumbs=generate_thumbs,
         error_message=None,
-        **(
-            {}
-            if not retry
-            else {
-                "total_found": 0,
-                "processed": 0,
-                "new_inserted": 0,
-                "duplicates_skipped": 0,
-                "errors": 0,
-                "current_file": "",
-                "start_time": None,
-            }
-        ),
+        **({} if not retry else {
+            "total_found": 0,
+            "processed": 0,
+            "new_inserted": 0,
+            "duplicates_skipped": 0,
+            "errors": 0,
+            "current_file": "",
+            "start_time": None,
+        }),
     )
 
     task = task_parse_takeout if mode == "takeout" else task_scan_directory
@@ -746,112 +688,103 @@ def resync_all(db: Session = Depends(get_db)):
     """Trigger background scans for all actively monitored directories."""
     from backend.tasks import task_scan_directory
     from backend.db.models import SyncedDirectory
-
+    from backend.services.task_control import clear_task_control, write_task_progress
+    import uuid
+    
     dirs = db.query(SyncedDirectory).filter(SyncedDirectory.is_active == True).all()
     responses = []
     for directory in dirs:
-        result = task_scan_directory.delay(directory.path, True)
-        responses.append(
-            ScanEnqueuedResponse(
-                task_id=result.id, message=f"Scan started for {directory.path}"
-            )
+        task_id = str(uuid.uuid4())
+        clear_task_control(task_id)
+        write_task_progress(
+            task_id,
+            "pending",
+            path=directory.path,
+            mode="scan",
+            generate_thumbs=True,
         )
+        task_scan_directory.delay(directory.path, True, task_id=task_id)
+        responses.append(ScanEnqueuedResponse(
+            task_id=task_id, 
+            message=f"Scan started for {directory.path}",
+            path=directory.path
+        ))
     return responses
-
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  Search & ML Endpoints                                                  ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-
 @app.post("/api/ml/start", response_model=ScanEnqueuedResponse)
 def start_ml_pipeline() -> ScanEnqueuedResponse:
     """Enqueue the background ML pipeline for embeddings."""
     from backend.tasks import task_process_ml_pipeline
-
+    
     result = task_process_ml_pipeline.delay()
     return ScanEnqueuedResponse(task_id=result.id, message="ML pipeline started")
-
 
 @app.post("/api/ml/retrain", response_model=ScanEnqueuedResponse)
 def retrain_ml(db: Session = Depends(get_db)):
     """Reset ML flags and re-run ML pipeline for all items."""
     from backend.tasks import task_process_ml_pipeline
     from backend.db.models import MediaItem, AuditLog
-
+    
     db.query(MediaItem).update({"faces_scanned": False, "clip_embedded": False})
-    db.add(
-        AuditLog(
-            action="retrain_ml",
-            level="warning",
-            details="Triggered AI retraining for all media items.",
-        )
-    )
+    db.add(AuditLog(
+        action="retrain_ml",
+        level="warning",
+        details="Triggered AI retraining for all media items."
+    ))
     db.commit()
-
+    
     result = task_process_ml_pipeline.delay()
     return ScanEnqueuedResponse(task_id=result.id, message="ML retraining started")
 
-
 @app.get("/api/search", response_model=TimelineResponse)
-def search_media(
-    q: str = Query(..., description="Search query"), db: Session = Depends(get_db)
-) -> TimelineResponse:
+def search_media(q: str = Query(..., description="Search query"), db: Session = Depends(get_db)) -> TimelineResponse:
     """Search for media items semantically or by metadata."""
     from backend.services.ml import search_semantic
-
+    
     # 1. Get media IDs from LanceDB (Semantic search)
     semantic_media_ids = search_semantic(q, limit=50)
-
+    
     # 2. Get media IDs from SQL database matching explicitly generated tags
-    tag_media_rows = (
-        db.execute(
-            select(MediaItem.id)
-            .join(MediaItem.tags)
-            .where(Tag.name.ilike(f"%{q}%"))
-            .limit(50)
-        )
-        .scalars()
-        .all()
-    )
-
+    tag_media_rows = db.execute(
+        select(MediaItem.id)
+        .join(MediaItem.tags)
+        .where(Tag.name.ilike(f"%{q}%"))
+        .limit(50)
+    ).scalars().all()
+    
     # Combine sets of IDs
     all_media_ids = list(set(semantic_media_ids + list(tag_media_rows)))
-
+    
     if not all_media_ids:
-        return TimelineResponse(
-            items=[], next_cursor=None, total_count=0, total_size_bytes=0
-        )
-
+        return TimelineResponse(items=[], next_cursor=None, total_count=0, total_size_bytes=0)
+        
     # Fetch metadata for those IDs
     query = select(MediaItem).where(MediaItem.id.in_(all_media_ids))
     rows = db.execute(query).scalars().all()
-
+    
     # Sort them: first the semantic results in order, then any SQL-only matches
     items_by_id = {item.id: item for item in rows}
     items = []
-
+    
     for mid in semantic_media_ids:
         if mid in items_by_id:
             items.append(items_by_id[mid])
             del items_by_id[mid]
-
+            
     for item in items_by_id.values():
         items.append(item)
-
+    
     # Build volume online lookup
     volume_ids = {item.volume_id for item in items if item.volume_id}
     online_volumes: set[str] = set()
     if volume_ids:
-        online_rows = (
-            db.execute(
-                select(Volume.id).where(
-                    Volume.id.in_(volume_ids), Volume.is_online.is_(True)
-                )
-            )
-            .scalars()
-            .all()
-        )
+        online_rows = db.execute(
+            select(Volume.id).where(Volume.id.in_(volume_ids), Volume.is_online.is_(True))
+        ).scalars().all()
         online_volumes = set(online_rows)
 
     # Map to response models
@@ -888,7 +821,6 @@ def search_media(
 # ║  Health Check                                                           ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-
 @app.get("/api/health")
 def health_check(db: Session = Depends(get_db)) -> dict:
     """Simple health check — verifies DB connectivity."""
@@ -915,14 +847,10 @@ from backend.db.models import SyncedDirectory
 from backend.schemas import SyncedDirectoryResponse, SyncedDirectoryCreate
 from backend.services.watcher import watcher_service
 
-
-@app.get(
-    "/api/settings/synced-directories", response_model=list[SyncedDirectoryResponse]
-)
+@app.get("/api/settings/synced-directories", response_model=list[SyncedDirectoryResponse])
 def get_synced_directories(db: Session = Depends(get_db)):
     """List all synced directories with total and synced file counts."""
     import os
-
     dirs = db.query(SyncedDirectory).all()
     res = []
     for d in dirs:
@@ -943,19 +871,13 @@ def get_synced_directories(db: Session = Depends(get_db)):
         if not path_prefix.endswith(os.sep):
             path_prefix += os.sep
 
-        synced_files = (
-            db.query(MediaItem)
-            .filter(MediaItem.original_path.like(path_prefix + "%"))
-            .count()
-        )
+        synced_files = db.query(MediaItem).filter(
+            MediaItem.original_path.like(path_prefix + "%")
+        ).count()
 
-        covers = (
-            db.query(MediaItem.id)
-            .filter(MediaItem.original_path.like(path_prefix + "%"))
-            .order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc())
-            .limit(4)
-            .all()
-        )
+        covers = db.query(MediaItem.id).filter(
+            MediaItem.original_path.like(path_prefix + "%")
+        ).order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc()).limit(4).all()
         cover_media_ids = [c[0] for c in covers]
 
         res.append(
@@ -972,26 +894,24 @@ def get_synced_directories(db: Session = Depends(get_db)):
         )
     return res
 
-
 @app.post("/api/settings/synced-directories", response_model=SyncedDirectoryResponse)
 def add_synced_directory(req: SyncedDirectoryCreate, db: Session = Depends(get_db)):
     """Add a new directory to monitor for real-time changes."""
     import os
-
     path_obj = Path(req.path).resolve()
     if not path_obj.is_dir():
         raise HTTPException(400, f"Not a valid directory: {req.path}")
-
+        
     watcher_service.add_directory(str(path_obj))
-
+    
     # Return the newly added or updated directory
     sd = db.query(SyncedDirectory).filter_by(path=str(path_obj)).first()
-
+    
     # Enqueue a background directory scan task
     from backend.tasks import task_scan_directory
     from backend.services.task_control import clear_task_control, write_task_progress
     import uuid
-
+    
     task_id = str(uuid.uuid4())
     clear_task_control(task_id)
     write_task_progress(
@@ -1002,7 +922,7 @@ def add_synced_directory(req: SyncedDirectoryCreate, db: Session = Depends(get_d
         generate_thumbs=True,
     )
     task_scan_directory.delay(str(path_obj), True, task_id=task_id)
-
+    
     # Calculate counts
     total_files = 0
     try:
@@ -1019,19 +939,13 @@ def add_synced_directory(req: SyncedDirectoryCreate, db: Session = Depends(get_d
     if not path_prefix.endswith(os.sep):
         path_prefix += os.sep
 
-    synced_files = (
-        db.query(MediaItem)
-        .filter(MediaItem.original_path.like(path_prefix + "%"))
-        .count()
-    )
+    synced_files = db.query(MediaItem).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).count()
 
-    covers = (
-        db.query(MediaItem.id)
-        .filter(MediaItem.original_path.like(path_prefix + "%"))
-        .order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc())
-        .limit(4)
-        .all()
-    )
+    covers = db.query(MediaItem.id).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc()).limit(4).all()
     cover_media_ids = [c[0] for c in covers]
 
     log_audit_entry("sync_dir_added", "success", f"Added directory to sync: {path_obj}")
@@ -1048,18 +962,14 @@ def add_synced_directory(req: SyncedDirectoryCreate, db: Session = Depends(get_d
         cover_media_ids=cover_media_ids,
     )
 
-
-@app.get(
-    "/api/settings/synced-directories/{id}", response_model=SyncedDirectoryResponse
-)
+@app.get("/api/settings/synced-directories/{id}", response_model=SyncedDirectoryResponse)
 def get_synced_directory(id: str, db: Session = Depends(get_db)):
     """Get a single synced directory."""
     import os
-
     d = db.get(SyncedDirectory, id)
     if not d:
         raise HTTPException(404, "Synced directory not found")
-
+        
     total_files = 0
     try:
         path_obj = Path(d.path)
@@ -1076,19 +986,13 @@ def get_synced_directory(id: str, db: Session = Depends(get_db)):
     if not path_prefix.endswith(os.sep):
         path_prefix += os.sep
 
-    synced_files = (
-        db.query(MediaItem)
-        .filter(MediaItem.original_path.like(path_prefix + "%"))
-        .count()
-    )
+    synced_files = db.query(MediaItem).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).count()
 
-    covers = (
-        db.query(MediaItem.id)
-        .filter(MediaItem.original_path.like(path_prefix + "%"))
-        .order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc())
-        .limit(4)
-        .all()
-    )
+    covers = db.query(MediaItem.id).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).order_by(MediaItem.date_taken.desc().nullslast(), MediaItem.id.desc()).limit(4).all()
     cover_media_ids = [c[0] for c in covers]
 
     return SyncedDirectoryResponse(
@@ -1102,39 +1006,33 @@ def get_synced_directory(id: str, db: Session = Depends(get_db)):
         cover_media_ids=cover_media_ids,
     )
 
-
 from backend.schemas import DirectoryToAlbumRequest
 from backend.db.models import Album
 
-
 @app.post("/api/synced-directories/{dir_id}/add-to-albums")
-def add_directory_to_albums(
-    dir_id: str, req: DirectoryToAlbumRequest, db: Session = Depends(get_db)
-):
+def add_directory_to_albums(dir_id: str, req: DirectoryToAlbumRequest, db: Session = Depends(get_db)):
     """Add all media items in a synced directory to one or more albums."""
     import os
-
+    
     directory = db.get(SyncedDirectory, dir_id)
     if not directory:
         raise HTTPException(404, "Synced directory not found")
-
+        
     albums = db.query(Album).filter(Album.id.in_(req.album_ids)).all()
     if not albums:
         raise HTTPException(404, "No valid albums found")
-
+        
     path_prefix = directory.path
     if not path_prefix.endswith(os.sep):
         path_prefix += os.sep
-
-    media_items = (
-        db.query(MediaItem)
-        .filter(MediaItem.original_path.like(path_prefix + "%"))
-        .all()
-    )
-
+        
+    media_items = db.query(MediaItem).filter(
+        MediaItem.original_path.like(path_prefix + "%")
+    ).all()
+    
     if not media_items:
         return {"status": "success", "added": 0}
-
+        
     added_count = 0
     for album in albums:
         existing_ids = {item.id for item in album.media_items}
@@ -1142,33 +1040,27 @@ def add_directory_to_albums(
             if item.id not in existing_ids:
                 album.media_items.append(item)
                 added_count += 1
-
+                
                 if not album.cover_media_id:
                     album.cover_media_id = item.id
-
+                    
     db.commit()
     return {"status": "success", "added": added_count}
-
 
 @app.delete("/api/settings/synced-directories/{id}")
 def remove_synced_directory(id: str, db: Session = Depends(get_db)):
     """Stop monitoring a directory and remove all synced media files from DB and cache."""
     import os
-
     sd = db.query(SyncedDirectory).filter_by(id=id).first()
     if not sd:
         raise HTTPException(404, "Synced directory not found")
-
+        
     path_prefix = sd.path
     if not path_prefix.endswith(os.sep):
         path_prefix += os.sep
 
     # Find all media items synced from this folder
-    items = (
-        db.query(MediaItem)
-        .filter(MediaItem.original_path.like(path_prefix + "%"))
-        .all()
-    )
+    items = db.query(MediaItem).filter(MediaItem.original_path.like(path_prefix + "%")).all()
     for item in items:
         # Delete generated thumbnail files if they exist
         if item.thumb_path:
@@ -1183,23 +1075,21 @@ def remove_synced_directory(id: str, db: Session = Depends(get_db)):
                 pass
         db.delete(item)
 
+    sd_path = sd.path
     # Delete the SyncedDirectory record
     db.delete(sd)
     db.commit()
 
     log_audit_entry(
-        "sync_dir_removed",
-        "warning",
-        f"Removed directory from sync: {sd.path}. Deleted {len(items)} synced media files from database and cache.",
+        "sync_dir_removed", 
+        "warning", 
+        f"Removed directory from sync: {sd_path}. Deleted {len(items)} synced media files from database and cache."
     )
 
     # Update watcher observer watches
     watcher_service.remove_directory(id)
-
-    return {
-        "status": "success",
-        "message": "Directory and all associated media removed",
-    }
+    
+    return {"status": "success", "message": "Directory and all associated media removed"}
 
 
 @app.post("/api/settings/factory-reset")
@@ -1209,9 +1099,9 @@ def factory_reset(db: Session = Depends(get_db)):
     from backend.db.engine import engine
     from backend.db.models import Base
     from backend.celery_app import celery_app
-
+    
     logger.info("Factory reset initiated")
-
+    
     # 1. Purge all pending Celery tasks
     try:
         celery_app.control.purge()
@@ -1249,17 +1139,13 @@ def factory_reset(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error("Failed to sync watcher after reset: %s", e)
 
-    return {
-        "status": "success",
-        "message": "Factory reset complete. Database and cache cleared.",
-    }
+    return {"status": "success", "message": "Factory reset complete. Database and cache cleared."}
 
 
 @app.get("/api/settings/audit-logs", response_model=list[AuditLogResponse])
 def get_audit_logs(db: Session = Depends(get_db)):
     """Fetch the most recent 100 audit log entries."""
     from backend.db.models import AuditLog
-
     return db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(100).all()
 
 
@@ -1270,12 +1156,10 @@ def get_audit_logs(db: Session = Depends(get_db)):
 from backend.db.models import Album
 from backend.schemas import AlbumCreate, AlbumResponse, AlbumMediaAdd
 
-
 @app.get("/api/albums", response_model=list[AlbumResponse])
 def get_albums(db: Session = Depends(get_db)):
     """List all user albums."""
     return db.query(Album).order_by(Album.created_at.desc()).all()
-
 
 @app.post("/api/albums", response_model=AlbumResponse)
 def create_album(req: AlbumCreate, db: Session = Depends(get_db)):
@@ -1286,24 +1170,19 @@ def create_album(req: AlbumCreate, db: Session = Depends(get_db)):
     db.refresh(album)
     return album
 
-
 @app.get("/api/albums/{album_id}/media", response_model=TimelineResponse)
 def get_album_media(album_id: str, db: Session = Depends(get_db)):
     """Get all media items in an album."""
     album = db.get(Album, album_id)
     if not album:
         raise HTTPException(404, "Album not found")
-
+    
     # Just return everything for now without cursor pagination since albums are usually small
     sort_col = func.coalesce(
         MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
     )
-    items = (
-        album.media_items.options(joinedload(MediaItem.volume))
-        .order_by(sort_col.desc(), MediaItem.id.desc())
-        .all()
-    )
-
+    items = album.media_items.options(joinedload(MediaItem.volume)).order_by(sort_col.desc(), MediaItem.id.desc()).all()
+    
     summaries = []
     for item in items:
         # Simplified volume check
@@ -1323,7 +1202,7 @@ def get_album_media(album_id: str, db: Session = Depends(get_db)):
                 is_online=is_online,
             )
         )
-
+        
     total_size = sum(item.file_size_bytes or 0 for item in items)
 
     return TimelineResponse(
@@ -1333,16 +1212,13 @@ def get_album_media(album_id: str, db: Session = Depends(get_db)):
         total_size_bytes=total_size,
     )
 
-
 @app.post("/api/albums/{album_id}/media")
-def add_media_to_album(
-    album_id: str, req: AlbumMediaAdd, db: Session = Depends(get_db)
-):
+def add_media_to_album(album_id: str, req: AlbumMediaAdd, db: Session = Depends(get_db)):
     """Add media items to an album."""
     album = db.get(Album, album_id)
     if not album:
         raise HTTPException(404, "Album not found")
-
+        
     for media_id in req.media_ids:
         item = db.get(MediaItem, media_id)
         if item and item not in album.media_items:
@@ -1350,42 +1226,38 @@ def add_media_to_album(
             # Set cover photo if it's the first item
             if not album.cover_media_id:
                 album.cover_media_id = item.id
-
+                
     db.commit()
     return {"status": "success"}
-
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  People & Pets                                                           ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-
 @app.get("/api/people", response_model=list[PersonResponse])
 def get_people(db: Session = Depends(get_db)):
     """List all people with their cover face."""
-    people = db.execute(select(Person).order_by(Person.name)).scalars().all()
-
+    people = db.execute(
+        select(Person).order_by(Person.name)
+    ).scalars().all()
+    
     responses = []
     for p in people:
-        count = (
-            db.execute(
-                select(func.count(Face.id)).where(Face.person_id == p.id)
-            ).scalar()
-            or 0
-        )
+        count = db.execute(select(func.count(Face.id)).where(Face.person_id == p.id)).scalar() or 0
         cover_media_id = None
         if p.cover_face_id:
             cover_face = db.get(Face, p.cover_face_id)
             if cover_face:
                 cover_media_id = cover_face.media_item_id
-
-        responses.append(
-            PersonResponse(
-                id=p.id, name=p.name, cover_media_id=cover_media_id, face_count=count
-            )
-        )
+                
+        responses.append(PersonResponse(
+            id=p.id,
+            name=p.name,
+            cover_media_id=cover_media_id,
+            cover_face_id=p.cover_face_id,
+            face_count=count
+        ))
     return responses
-
 
 @app.put("/api/people/{person_id}", response_model=PersonResponse)
 def update_person(person_id: str, req: PersonUpdate, db: Session = Depends(get_db)):
@@ -1396,23 +1268,21 @@ def update_person(person_id: str, req: PersonUpdate, db: Session = Depends(get_d
     person.name = req.name
     db.commit()
     db.refresh(person)
-
-    count = (
-        db.execute(
-            select(func.count(Face.id)).where(Face.person_id == person.id)
-        ).scalar()
-        or 0
-    )
+    
+    count = db.execute(select(func.count(Face.id)).where(Face.person_id == person.id)).scalar() or 0
     cover_media_id = None
     if person.cover_face_id:
         cover_face = db.get(Face, person.cover_face_id)
         if cover_face:
             cover_media_id = cover_face.media_item_id
-
+            
     return PersonResponse(
-        id=person.id, name=person.name, cover_media_id=cover_media_id, face_count=count
+        id=person.id,
+        name=person.name,
+        cover_media_id=cover_media_id,
+        cover_face_id=person.cover_face_id,
+        face_count=count
     )
-
 
 @app.get("/api/people/{person_id}/media", response_model=TimelineResponse)
 def get_person_media(person_id: str, db: Session = Depends(get_db)):
@@ -1420,23 +1290,19 @@ def get_person_media(person_id: str, db: Session = Depends(get_db)):
     person = db.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
-
+        
     sort_col = func.coalesce(
         MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
     )
-
+    
     # Query media items that have a face belonging to this person
-    items = (
-        db.execute(
-            select(MediaItem)
-            .join(Face, Face.media_item_id == MediaItem.id)
-            .where(Face.person_id == person_id)
-            .order_by(sort_col.desc(), MediaItem.id.desc())
-        )
-        .scalars()
-        .all()
-    )
-
+    items = db.execute(
+        select(MediaItem)
+        .join(Face, Face.media_item_id == MediaItem.id)
+        .where(Face.person_id == person_id)
+        .order_by(sort_col.desc(), MediaItem.id.desc())
+    ).scalars().all()
+    
     summaries = []
     for item in items:
         is_online = item.volume.is_online if item.volume else True
@@ -1455,7 +1321,7 @@ def get_person_media(person_id: str, db: Session = Depends(get_db)):
                 is_online=is_online,
             )
         )
-
+        
     total_size = sum(item.file_size_bytes or 0 for item in items)
 
     return TimelineResponse(
@@ -1465,6 +1331,64 @@ def get_person_media(person_id: str, db: Session = Depends(get_db)):
         total_size_bytes=total_size,
     )
 
+@app.get("/api/faces/{face_id}/crop")
+def get_face_crop(face_id: str, db: Session = Depends(get_db)):
+    """Return the cropped face image, using cache if available."""
+    import os
+    from PIL import Image
+
+    face = db.get(Face, face_id)
+    if not face:
+        raise HTTPException(404, "Face not found")
+        
+    media_item = db.get(MediaItem, face.media_item_id)
+    if not media_item:
+        raise HTTPException(404, "Media item not found")
+        
+    # Check cache first
+    face_cache_dir = settings.CACHE_DIR / "faces"
+    face_cache_dir.mkdir(parents=True, exist_ok=True)
+    crop_path = face_cache_dir / f"{face_id}.jpg"
+    
+    if crop_path.exists():
+        return FileResponse(crop_path, media_type="image/jpeg")
+        
+    # Generate crop
+    try:
+        if not os.path.exists(media_item.original_path):
+            raise HTTPException(404, f"Original file not found: {media_item.original_path}")
+            
+        with Image.open(media_item.original_path) as img:
+            # Crop using the bounding box
+            # PIL crop expects (left, upper, right, lower)
+            # Make sure coordinates are within bounds
+            width, height = img.size
+            
+            box_width = face.box_x2 - face.box_x1
+            box_height = face.box_y2 - face.box_y1
+            
+            pad_x = box_width * 0.20
+            pad_y = box_height * 0.20
+            
+            x1 = max(0, min(face.box_x1 - pad_x, width))
+            y1 = max(0, min(face.box_y1 - pad_y, height))
+            x2 = max(0, min(face.box_x2 + pad_x, width))
+            y2 = max(0, min(face.box_y2 + pad_y, height))
+            
+            # If the box is invalid/collapsed, use full image
+            if x2 <= x1 or y2 <= y1:
+                cropped = img
+            else:
+                cropped = img.crop((x1, y1, x2, y2))
+                
+            # Resize to a standard thumbnail size, e.g. 160x160
+            cropped = cropped.resize((160, 160), Image.Resampling.LANCZOS)
+            cropped.convert("RGB").save(crop_path, "JPEG", quality=90)
+            
+        return FileResponse(crop_path, media_type="image/jpeg")
+    except Exception as e:
+        logger.exception("Failed to generate face crop: %s", e)
+        raise HTTPException(500, f"Error generating crop: {str(e)}")
 
 @app.get("/api/pets", response_model=TimelineResponse)
 def get_pets(db: Session = Depends(get_db)):
@@ -1472,19 +1396,14 @@ def get_pets(db: Session = Depends(get_db)):
     sort_col = func.coalesce(
         MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
     )
-
-    items = (
-        db.execute(
-            select(MediaItem)
-            .join(MediaItem.tags)
-            .where(Tag.name.in_(["Dog", "Cat"]))
-            .order_by(sort_col.desc(), MediaItem.id.desc())
-        )
-        .scalars()
-        .unique()
-        .all()
-    )
-
+    
+    items = db.execute(
+        select(MediaItem)
+        .join(MediaItem.tags)
+        .where(Tag.name.in_(["Dog", "Cat"]))
+        .order_by(sort_col.desc(), MediaItem.id.desc())
+    ).scalars().unique().all()
+    
     summaries = []
     for item in items:
         is_online = item.volume.is_online if item.volume else True
@@ -1503,7 +1422,7 @@ def get_pets(db: Session = Depends(get_db)):
                 is_online=is_online,
             )
         )
-
+        
     total_size = sum(item.file_size_bytes or 0 for item in items)
 
     return TimelineResponse(
@@ -1513,11 +1432,9 @@ def get_pets(db: Session = Depends(get_db)):
         total_size_bytes=total_size,
     )
 
-
 @app.post("/api/ml/cluster_faces")
 def trigger_cluster_faces(db: Session = Depends(get_db)):
     """Manually trigger face clustering."""
     from backend.services.ml import cluster_faces
-
     result = cluster_faces(db)
     return result
