@@ -530,7 +530,7 @@ def enqueue_scan(req: ScanRequest) -> ScanEnqueuedResponse:
         generate_thumbs=req.generate_thumbs,
     )
     task_scan_directory.delay(str(scan_path), req.generate_thumbs, task_id=task_id)
-    return ScanEnqueuedResponse(task_id=task_id, message=f"Scan enqueued for {scan_path}")
+    return ScanEnqueuedResponse(task_id=task_id, message=f"Scan enqueued for {scan_path}", path=str(scan_path))
 
 
 @app.post("/api/scan/takeout", response_model=ScanEnqueuedResponse)
@@ -554,7 +554,7 @@ def enqueue_takeout(req: TakeoutRequest) -> ScanEnqueuedResponse:
         generate_thumbs=req.generate_thumbs,
     )
     task_parse_takeout.delay(str(takeout_path), req.generate_thumbs, task_id=task_id)
-    return ScanEnqueuedResponse(task_id=task_id, message=f"Takeout import enqueued for {takeout_path}")
+    return ScanEnqueuedResponse(task_id=task_id, message=f"Takeout import enqueued for {takeout_path}", path=str(takeout_path))
 
 
 @app.websocket("/api/ws/scan-progress")
@@ -688,12 +688,27 @@ def resync_all(db: Session = Depends(get_db)):
     """Trigger background scans for all actively monitored directories."""
     from backend.tasks import task_scan_directory
     from backend.db.models import SyncedDirectory
+    from backend.services.task_control import clear_task_control, write_task_progress
+    import uuid
     
     dirs = db.query(SyncedDirectory).filter(SyncedDirectory.is_active == True).all()
     responses = []
     for directory in dirs:
-        result = task_scan_directory.delay(directory.path, True)
-        responses.append(ScanEnqueuedResponse(task_id=result.id, message=f"Scan started for {directory.path}"))
+        task_id = str(uuid.uuid4())
+        clear_task_control(task_id)
+        write_task_progress(
+            task_id,
+            "pending",
+            path=directory.path,
+            mode="scan",
+            generate_thumbs=True,
+        )
+        task_scan_directory.delay(directory.path, True, task_id=task_id)
+        responses.append(ScanEnqueuedResponse(
+            task_id=task_id, 
+            message=f"Scan started for {directory.path}",
+            path=directory.path
+        ))
     return responses
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -1060,6 +1075,7 @@ def remove_synced_directory(id: str, db: Session = Depends(get_db)):
                 pass
         db.delete(item)
 
+    sd_path = sd.path
     # Delete the SyncedDirectory record
     db.delete(sd)
     db.commit()
@@ -1067,7 +1083,7 @@ def remove_synced_directory(id: str, db: Session = Depends(get_db)):
     log_audit_entry(
         "sync_dir_removed", 
         "warning", 
-        f"Removed directory from sync: {sd.path}. Deleted {len(items)} synced media files from database and cache."
+        f"Removed directory from sync: {sd_path}. Deleted {len(items)} synced media files from database and cache."
     )
 
     # Update watcher observer watches
@@ -1238,6 +1254,7 @@ def get_people(db: Session = Depends(get_db)):
             id=p.id,
             name=p.name,
             cover_media_id=cover_media_id,
+            cover_face_id=p.cover_face_id,
             face_count=count
         ))
     return responses
@@ -1263,6 +1280,7 @@ def update_person(person_id: str, req: PersonUpdate, db: Session = Depends(get_d
         id=person.id,
         name=person.name,
         cover_media_id=cover_media_id,
+        cover_face_id=person.cover_face_id,
         face_count=count
     )
 
@@ -1312,6 +1330,65 @@ def get_person_media(person_id: str, db: Session = Depends(get_db)):
         total_count=len(summaries),
         total_size_bytes=total_size,
     )
+
+@app.get("/api/faces/{face_id}/crop")
+def get_face_crop(face_id: str, db: Session = Depends(get_db)):
+    """Return the cropped face image, using cache if available."""
+    import os
+    from PIL import Image
+
+    face = db.get(Face, face_id)
+    if not face:
+        raise HTTPException(404, "Face not found")
+        
+    media_item = db.get(MediaItem, face.media_item_id)
+    if not media_item:
+        raise HTTPException(404, "Media item not found")
+        
+    # Check cache first
+    face_cache_dir = settings.CACHE_DIR / "faces"
+    face_cache_dir.mkdir(parents=True, exist_ok=True)
+    crop_path = face_cache_dir / f"{face_id}.jpg"
+    
+    if crop_path.exists():
+        return FileResponse(crop_path, media_type="image/jpeg")
+        
+    # Generate crop
+    try:
+        if not os.path.exists(media_item.original_path):
+            raise HTTPException(404, f"Original file not found: {media_item.original_path}")
+            
+        with Image.open(media_item.original_path) as img:
+            # Crop using the bounding box
+            # PIL crop expects (left, upper, right, lower)
+            # Make sure coordinates are within bounds
+            width, height = img.size
+            
+            box_width = face.box_x2 - face.box_x1
+            box_height = face.box_y2 - face.box_y1
+            
+            pad_x = box_width * 0.20
+            pad_y = box_height * 0.20
+            
+            x1 = max(0, min(face.box_x1 - pad_x, width))
+            y1 = max(0, min(face.box_y1 - pad_y, height))
+            x2 = max(0, min(face.box_x2 + pad_x, width))
+            y2 = max(0, min(face.box_y2 + pad_y, height))
+            
+            # If the box is invalid/collapsed, use full image
+            if x2 <= x1 or y2 <= y1:
+                cropped = img
+            else:
+                cropped = img.crop((x1, y1, x2, y2))
+                
+            # Resize to a standard thumbnail size, e.g. 160x160
+            cropped = cropped.resize((160, 160), Image.Resampling.LANCZOS)
+            cropped.convert("RGB").save(crop_path, "JPEG", quality=90)
+            
+        return FileResponse(crop_path, media_type="image/jpeg")
+    except Exception as e:
+        logger.exception("Failed to generate face crop: %s", e)
+        raise HTTPException(500, f"Error generating crop: {str(e)}")
 
 @app.get("/api/pets", response_model=TimelineResponse)
 def get_pets(db: Session = Depends(get_db)):

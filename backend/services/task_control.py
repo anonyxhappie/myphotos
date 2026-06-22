@@ -44,6 +44,8 @@ def write_task_progress(
     new_inserted: int | None = None,
     duplicates_skipped: int | None = None,
     errors: int | None = None,
+    faces_found: int | None = None,
+    labels_found: int | None = None,
     current_file: str | None = None,
     start_time: float | None = None,
     result: dict[str, Any] | None = None,
@@ -65,6 +67,8 @@ def write_task_progress(
         if duplicates_skipped is None
         else duplicates_skipped,
         "errors": previous_progress.get("errors", 0) if errors is None else errors,
+        "faces_found": previous_progress.get("faces_found", 0) if faces_found is None else faces_found,
+        "labels_found": previous_progress.get("labels_found", 0) if labels_found is None else labels_found,
         "current_file": previous_progress.get("current_file") if current_file is None else current_file,
         "start_time": previous_progress.get("start_time") if start_time is None else start_time,
     }

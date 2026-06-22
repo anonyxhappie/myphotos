@@ -341,10 +341,15 @@ def task_process_ml_pipeline() -> dict:
                 start_time=start_time
             )
             
+        total_faces = 0
+        total_labels = 0
+        
         while True:
             result = index_unprocessed_items(session, batch_size=20)
             processed = result.get("processed", 0)
             total_processed += processed
+            total_faces += result.get("faces_found", 0)
+            total_labels += result.get("labels_found", 0)
             
             if total_to_process > 0:
                 write_task_progress(
@@ -352,6 +357,8 @@ def task_process_ml_pipeline() -> dict:
                     status="running",
                     total_found=total_to_process,
                     processed=total_processed,
+                    faces_found=total_faces,
+                    labels_found=total_labels,
                     path="AI Media Analysis",
                     mode="scan",
                     start_time=start_time
@@ -366,6 +373,8 @@ def task_process_ml_pipeline() -> dict:
                 status="complete",
                 total_found=total_to_process,
                 processed=total_processed,
+                faces_found=total_faces,
+                labels_found=total_labels,
                 path="AI Media Analysis",
                 mode="scan",
                 start_time=start_time
@@ -375,7 +384,7 @@ def task_process_ml_pipeline() -> dict:
             session.add(AuditLog(
                 action="ml_pipeline_complete",
                 level="success",
-                details=f"Completed AI analysis for {total_processed} items."
+                details=f"Completed AI analysis for {total_processed} items. Found {total_faces} faces and {total_labels} labels."
             ))
             session.commit()
                 

@@ -47,22 +47,29 @@ export default function PeoplePetsPage({ onPersonClick, onPetsClick, isAnalyzing
     }
   };
 
-  if (loading) return <div className="page-loading">Loading...</div>;
+  if (loading) {
+    return (
+      <div className="timeline-view text-white">
+        <div className="timeline-toolbar">
+          <div className="timeline-heading">
+            <h1>People & Pets</h1>
+          </div>
+        </div>
+        <div className="timeline-scroller flex items-center justify-center">
+          <div className="loading-spinner" />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="page-content">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <h1 className="settings-page-title" style={{ margin: 0 }}>People & Pets</h1>
+    <div className="timeline-view text-white">
+      <div className="timeline-toolbar">
+        <div className="timeline-heading flex items-center gap-4">
+          <h1>People & Pets</h1>
           {isAnalyzing && (
-             <div style={{ fontSize: '12px', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div
-                    className="w-3 h-3 rounded-full border-2 border-primary/20 shrink-0"
-                    style={{
-                      borderTopColor: 'currentColor',
-                      animation: 'spin 0.8s linear infinite',
-                    }}
-                />
+             <div className="text-xs text-indigo-400 flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full border-2 border-indigo-400/20 border-t-indigo-400 animate-spin shrink-0" />
                 Analyzing media...
              </div>
           )}
@@ -72,72 +79,73 @@ export default function PeoplePetsPage({ onPersonClick, onPetsClick, isAnalyzing
           onClick={handleCluster} 
           disabled={clustering || isAnalyzing}
           title={isAnalyzing ? "Wait for AI Analysis to complete" : "Group similar faces into people"}
-          style={{ padding: '8px 16px', minWidth: '120px', justifyContent: 'center' }}
         >
           {clustering ? 'Clustering...' : 'Find People'}
         </button>
       </div>
 
-      <section style={{ marginBottom: '40px' }}>
-        <h2 style={{ fontSize: '20px', fontWeight: 500, marginBottom: '16px' }}>People</h2>
-        {people.length === 0 ? (
-          <div style={{ padding: '24px 0', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
-            <p>{isAnalyzing ? "AI is analyzing your media to find people... This may take a while." : "No people found. If you just added photos, make sure AI analysis has finished, then click 'Find People'."}</p>
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '20px' }}>
-            {people.map(person => (
-              <div 
-                key={person.id} 
-                onClick={() => onPersonClick(person)}
-                style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}
-              >
-                <div style={{ width: '120px', height: '120px', borderRadius: '50%', overflow: 'hidden', background: 'var(--color-bg-tertiary)', marginBottom: '12px' }}>
-                  {person.cover_media_id ? (
-                    <img 
-                      src={getThumbUrl(person.cover_media_id)} 
-                      alt={person.name}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                  ) : (
-                    <div className="album-cover-placeholder">?</div>
-                  )}
-                </div>
-                <span style={{ fontWeight: 500, textAlign: 'center' }}>{person.name}</span>
-                <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                  {person.face_count} photo{person.face_count !== 1 ? 's' : ''}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 style={{ fontSize: '20px', fontWeight: 500, marginBottom: '16px' }}>Pets</h2>
-        {(!pets || pets.items.length === 0) ? (
-          <div style={{ padding: '24px 0', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
-            <p>No pets found yet.</p>
-          </div>
-        ) : (
-          <div 
-            onClick={onPetsClick}
-            style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', width: '140px', alignItems: 'center' }}
-          >
-            <div style={{ width: '120px', height: '120px', borderRadius: '50%', overflow: 'hidden', background: 'var(--color-bg-tertiary)', marginBottom: '12px' }}>
-              <img 
-                src={getThumbUrl(pets.items[0].id)} 
-                alt="Pets"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
+      <div className="timeline-scroller overflow-y-auto px-7 py-6">
+        <section className="mb-8 block">
+          <h2 className="text-xl font-medium mb-4">People</h2>
+          {people.length === 0 ? (
+            <div className="text-sm text-white/60">
+              <p>{isAnalyzing ? "AI is analyzing your media to find people... This may take a while." : "No people found. If you just added photos, make sure AI analysis has finished, then click 'Find People'."}</p>
             </div>
-            <span style={{ fontWeight: 500, textAlign: 'center' }}>All Pets</span>
-            <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-              {pets.items.length} photo{pets.items.length !== 1 ? 's' : ''}
-            </span>
-          </div>
-        )}
-      </section>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-5">
+              {people.map(person => (
+                <div 
+                  key={person.id} 
+                  onClick={() => onPersonClick(person)}
+                  className="cursor-pointer flex flex-col items-center"
+                >
+                  <div className="w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 mb-3">
+                    {person.cover_media_id ? (
+                      <img 
+                        src={getThumbUrl(person.cover_media_id)} 
+                        alt={person.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-white/20 text-2xl">?</div>
+                    )}
+                  </div>
+                  <span className="font-medium text-center">{person.name}</span>
+                  <span className="text-xs text-white/60 mt-1">
+                    {person.face_count} photo{person.face_count !== 1 ? 's' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="block">
+          <h2 className="text-xl font-medium mb-4">Pets</h2>
+          {(!pets || pets.items.length === 0) ? (
+            <div className="text-sm text-white/60">
+              <p>No pets found yet.</p>
+            </div>
+          ) : (
+            <div 
+              onClick={onPetsClick}
+              className="cursor-pointer flex flex-col items-center w-[140px]"
+            >
+              <div className="w-[120px] h-[120px] rounded-full overflow-hidden bg-white/5 mb-3">
+                <img 
+                  src={getThumbUrl(pets.items[0].id)} 
+                  alt="Pets"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <span className="font-medium text-center">All Pets</span>
+              <span className="text-xs text-white/60 mt-1">
+                {pets.items.length} photo{pets.items.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
