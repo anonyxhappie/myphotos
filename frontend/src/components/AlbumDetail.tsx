@@ -57,7 +57,7 @@ export default function AlbumDetail({ onPhotoClick, onTotalCountChange }: AlbumD
 
       <div className="flex-1 overflow-hidden relative">
         <Timeline 
-          key={timelineKey}
+          key={`${id}:${timelineKey}`}
           searchQuery="" 
           albumId={id}
           hideHeader={true}

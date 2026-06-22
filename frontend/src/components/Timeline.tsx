@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import type { MediaItemSummary } from '../api/types';
-import { fetchTimeline, searchPhotos, bulkDeleteMedia, fetchAlbumMedia } from '../api/client';
+import { fetchTimeline, searchPhotos, bulkDeleteMedia, fetchAlbumMedia, fetchTagMedia } from '../api/client';
 import PhotoCard from './PhotoCard';
 import AddToAlbumModal from './AddToAlbumModal';
 
@@ -12,6 +12,7 @@ interface TimelineProps {
   videosOnly?: boolean;
   lockedOnly?: boolean;
   albumId?: string;
+  tagId?: string;
   dirId?: string;
   personId?: string;
   petsOnly?: boolean;
@@ -219,6 +220,7 @@ export default function Timeline({
   videosOnly = false,
   lockedOnly = false,
   albumId,
+  tagId,
   dirId,
   personId,
   petsOnly = false,
@@ -298,6 +300,9 @@ export default function Timeline({
       } else if (albumId) {
         res = await fetchAlbumMedia(albumId);
         setHasMore(false);
+      } else if (tagId) {
+        res = await fetchTagMedia(tagId);
+        setHasMore(false);
       } else {
         res = await fetchTimeline({
           cursor: nextCursor || undefined,
@@ -320,7 +325,7 @@ export default function Timeline({
 
       setItems((prev) => {
         const newItems = res.items || [];
-        const appendedItems = (searchQuery || personId || petsOnly || albumId) ? newItems : [...prev, ...newItems];
+        const appendedItems = (searchQuery || personId || petsOnly || albumId || tagId) ? newItems : [...prev, ...newItems];
         // Deduplicate by ID
         return Array.from(new Map(appendedItems.map((item: MediaItemSummary) => [item.id, item])).values()) as MediaItemSummary[];
       });
@@ -333,6 +338,7 @@ export default function Timeline({
     }
   }, [
     albumId,
+    tagId,
     dirId,
     favoritesOnly,
     hasMore,
@@ -357,7 +363,7 @@ export default function Timeline({
 
   useEffect(() => {
     if (!refreshToken || refreshToken === lastRefreshToken.current) return;
-    if (searchQuery.trim() || albumId || !hasLoadedOnce) return;
+    if (searchQuery.trim() || albumId || tagId || !hasLoadedOnce) return;
 
     lastRefreshToken.current = refreshToken;
 
@@ -385,6 +391,7 @@ export default function Timeline({
     })();
   }, [
     albumId,
+    tagId,
     dirId,
     favoritesOnly,
     hasLoadedOnce,

@@ -272,3 +272,24 @@ class PersonResponse(BaseModel):
 
 class PersonUpdate(BaseModel):
     name: str
+
+
+class BulkDeletePeoplePetsRequest(BaseModel):
+    person_ids: list[str]
+    delete_pets: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+class TagCreate(BaseModel):
+    name: str
+
+class TagWithCount(BaseModel):
+    id: str
+    name: str
+    source: str
+    media_count: int
+    
+    model_config = {"from_attributes": True}
+

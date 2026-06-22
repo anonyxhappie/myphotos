@@ -218,15 +218,18 @@ def extract_exif(file_path: str | Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Directory scanner
 # ---------------------------------------------------------------------------
-def _load_existing_hashes(session: Session) -> set[str]:
-    """Load all known SHA-256 hashes from the DB for fast skip-checks.
+def _load_existing_items_metadata(session: Session) -> dict[str, tuple[bool, bool]]:
+    """Load metadata (has_thumb, has_preview) for existing items keyed by SHA-256.
 
-    For a library of 1M photos this set uses ~64 MB of RAM (64-char
-    strings × 1M), which is acceptable.
+    For a library of 1M photos this dict uses ~80-100 MB of RAM, which is acceptable.
     """
-    stmt = select(MediaItem.sha256)
-    rows = session.execute(stmt).scalars().all()
-    return set(rows)
+    stmt = select(MediaItem.sha256, MediaItem.thumb_path, MediaItem.preview_path)
+    rows = session.execute(stmt).all()
+    return {
+        row[0]: (row[1] is not None, row[2] is not None)
+        for row in rows
+    }
+
 
 
 def _update_task_progress(
@@ -315,9 +318,9 @@ def scan_directory(
             logger.warning("Resume cursor no longer exists; safely rescanning with dedup: %s", resume_after)
             start_index = 0
 
-    # Pre-load existing hashes for O(1) dedup checks
-    existing_hashes = _load_existing_hashes(session)
-    logger.info("Loaded %d existing hashes for dedup", len(existing_hashes))
+    # Pre-load existing items metadata for O(1) checks
+    existing_items = _load_existing_items_metadata(session)
+    logger.info("Loaded %d existing items for dedup and thumbnail verification", len(existing_items))
 
     # Resolve the volume for this path
     volume = get_volume_for_path(session, root)
@@ -387,7 +390,28 @@ def scan_directory(
                 # 1. SHA-256
                 sha256 = compute_sha256(file_path)
 
-                if sha256 in existing_hashes:
+                if sha256 in existing_items:
+                    has_thumb, has_preview = existing_items[sha256]
+                    updated_fields = {}
+                    
+                    if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
+                        if not has_thumb:
+                            thumb_path = generate_thumbnail(file_path, sha256)
+                            if thumb_path:
+                                updated_fields["thumb_path"] = thumb_path
+                        if not has_preview:
+                            preview_path = generate_preview(file_path, sha256)
+                            if preview_path:
+                                updated_fields["preview_path"] = preview_path
+                                
+                    if updated_fields:
+                        session.query(MediaItem).filter(MediaItem.sha256 == sha256).update(updated_fields)
+                        session.commit()
+                        existing_items[sha256] = (
+                            has_thumb or "thumb_path" in updated_fields,
+                            has_preview or "preview_path" in updated_fields
+                        )
+
                     result.duplicates_skipped += 1
                     # Throttled progress update for duplicate skips
                     if task_id and (processed % 100 == 0 or processed == total_files):
@@ -406,7 +430,10 @@ def scan_directory(
 
                 # Mark as seen to avoid processing the same file twice
                 # within this scan (e.g. symlinks)
-                existing_hashes.add(sha256)
+                existing_items[sha256] = (
+                    generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS,
+                    generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS
+                )
 
                 # 2. pHash (images only)
                 phash = compute_phash(file_path)
@@ -421,7 +448,7 @@ def scan_directory(
                 # 5. Thumbnail generation (optional)
                 thumb_path = None
                 preview_path = None
-                if generate_thumbs and ext in settings.SUPPORTED_IMAGE_EXTENSIONS:
+                if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
                     thumb_path = generate_thumbnail(file_path, sha256)
                     preview_path = generate_preview(file_path, sha256)
 
@@ -515,6 +542,17 @@ def scan_file(
         # O(1) dedup check
         existing = session.query(MediaItem).filter(MediaItem.sha256 == sha256).first()
         if existing:
+            updated = False
+            if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
+                settings.ensure_cache_dirs()
+                if not existing.thumb_path:
+                    existing.thumb_path = generate_thumbnail(file_path, sha256)
+                    updated = True
+                if not existing.preview_path:
+                    existing.preview_path = generate_preview(file_path, sha256)
+                    updated = True
+                if updated:
+                    session.commit()
             return False
             
         phash = compute_phash(file_path)
@@ -527,7 +565,7 @@ def scan_file(
         
         thumb_path = None
         preview_path = None
-        if generate_thumbs and ext in settings.SUPPORTED_IMAGE_EXTENSIONS:
+        if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
             settings.ensure_cache_dirs()
             thumb_path = generate_thumbnail(file_path, sha256)
             preview_path = generate_preview(file_path, sha256)

@@ -1,4 +1,7 @@
 import { NavLink } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { fetchAlbums, fetchTags } from '../api/client';
+import type { Album, TagWithCount } from '../api/types';
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -25,7 +28,8 @@ type IconName =
   | 'screenshots'
   | 'lock'
   | 'people'
-  | 'settings';
+  | 'settings'
+  | 'tag';
 
 function BrandMark() {
   return (
@@ -142,14 +146,17 @@ function NavigationIcon({ name }: { name: IconName }) {
       </svg>
     );
   }
+  if (name === 'tag') {
+    return (
+      <svg {...common}>
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+        <circle cx="6.5" cy="6.5" r="1.5" fill="currentColor" />
+      </svg>
+    );
+  }
   return null;
 }
 
-const primaryItems: Array<{ to: string; label: string; icon: IconName; end?: boolean }> = [
-  { to: '/', label: 'Photos', icon: 'photos', end: true },
-  { to: '/albums', label: 'Albums', icon: 'albums' },
-  { to: '/folders', label: 'Folders', icon: 'folders' },
-];
 
 const libraryItems: Array<{ to: string; label: string; icon: IconName }> = [
   { to: '/favourites', label: 'Favourites', icon: 'heart' },
@@ -187,6 +194,25 @@ function NavItem({
 }
 
 export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize = 0 }: SidebarProps) {
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [albumsLoading, setAlbumsLoading] = useState(true);
+  const [albumsExpanded, setAlbumsExpanded] = useState(true);
+  const [tags, setTags] = useState<TagWithCount[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(true);
+  const [tagsExpanded, setTagsExpanded] = useState(true);
+
+  useEffect(() => {
+    fetchAlbums()
+      .then(setAlbums)
+      .catch(console.error)
+      .finally(() => setAlbumsLoading(false));
+
+    fetchTags('user')
+      .then(setTags)
+      .catch(console.error)
+      .finally(() => setTagsLoading(false));
+  }, []);
+
   return (
     <>
       <button
@@ -210,9 +236,120 @@ export default function Sidebar({ isOpen, onClose, currentCount = 0, currentSize
 
         <nav className="sidebar-navigation" aria-label="Main navigation">
           <div className="sidebar-nav-group">
-            {primaryItems.map((item) => (
-              <NavItem key={item.to} {...item} onClick={onClose} />
-            ))}
+            <NavItem to="/" label="Photos" icon="photos" end onClick={onClose} />
+            
+            <div className="sidebar-albums-section">
+              <div className="sidebar-nav-item-wrapper">
+                <NavLink to="/albums" className="sidebar-nav-item" onClick={onClose} style={{ paddingRight: '40px' }}>
+                  <NavigationIcon name="albums" />
+                  <span>Albums</span>
+                </NavLink>
+                {!albumsLoading && albums.length > 0 && (
+                  <button 
+                    className="sidebar-expand-button"
+                    onClick={(e) => { e.preventDefault(); setAlbumsExpanded(!albumsExpanded); }}
+                    aria-label="Toggle albums"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: albumsExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              
+              <div className={`sidebar-albums-list ${albumsExpanded ? 'expanded' : ''}`}>
+                <div className="sidebar-albums-list-inner">
+                  {albumsLoading ? (
+                    <div className="sidebar-albums-skeleton">
+                      <div className="skeleton-item"></div>
+                      <div className="skeleton-item"></div>
+                      <div className="skeleton-item"></div>
+                    </div>
+                  ) : (
+                    <>
+                      {albums.slice(0, 5).map(album => (
+                        <NavLink 
+                          key={album.id} 
+                          to={`/albums/${album.id}`}
+                          className="sidebar-album-item"
+                          onClick={onClose}
+                        >
+                          {album.title}
+                        </NavLink>
+                      ))}
+                      {albums.length > 5 && (
+                        <NavLink 
+                          to="/albums"
+                          className="sidebar-view-all"
+                          onClick={onClose}
+                        >
+                          View all
+                        </NavLink>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="sidebar-albums-section">
+              <div className="sidebar-nav-item-wrapper">
+                <NavLink to="/tags" className="sidebar-nav-item" onClick={onClose} style={{ paddingRight: '40px' }}>
+                  <NavigationIcon name="tag" />
+                  <span>Tags</span>
+                  {!tagsLoading && tags.length > 0 && (
+                    <span className="sidebar-album-count">{tags.length}</span>
+                  )}
+                </NavLink>
+                {!tagsLoading && tags.length > 0 && (
+                  <button 
+                    className="sidebar-expand-button"
+                    onClick={(e) => { e.preventDefault(); setTagsExpanded(!tagsExpanded); }}
+                    aria-label="Toggle tags"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: tagsExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              
+              <div className={`sidebar-albums-list ${tagsExpanded ? 'expanded' : ''}`}>
+                <div className="sidebar-albums-list-inner">
+                  {tagsLoading ? (
+                    <div className="sidebar-albums-skeleton">
+                      <div className="skeleton-item"></div>
+                      <div className="skeleton-item"></div>
+                      <div className="skeleton-item"></div>
+                    </div>
+                  ) : (
+                    <>
+                      {tags.slice(0, 5).map(tag => (
+                        <NavLink 
+                          key={tag.id} 
+                          to={`/tags/${tag.id}`}
+                          className="sidebar-album-item"
+                          onClick={onClose}
+                        >
+                          #{tag.name}
+                        </NavLink>
+                      ))}
+                      {tags.length > 5 && (
+                        <NavLink 
+                          to="/tags"
+                          className="sidebar-view-all"
+                          onClick={onClose}
+                        >
+                          View all tags
+                        </NavLink>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <NavItem to="/folders" label="Folders" icon="folders" onClick={onClose} />
           </div>
 
           <div className="sidebar-section-label">Library</div>

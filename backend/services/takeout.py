@@ -259,10 +259,10 @@ def parse_takeout_directory(
     volume = get_volume_for_path(session, root)
     volume_id = volume.id if volume else None
 
-    # Pre-load existing hashes
-    from backend.services.scanner import _load_existing_hashes
+    # Pre-load existing items metadata
+    from backend.services.scanner import _load_existing_items_metadata
 
-    existing_hashes = _load_existing_hashes(session)
+    existing_items = _load_existing_items_metadata(session)
 
     if generate_thumbs:
         settings.ensure_cache_dirs()
@@ -346,7 +346,29 @@ def parse_takeout_directory(
                 # 1. SHA-256
                 sha256 = compute_sha256(file_path)
 
-                if sha256 in existing_hashes:
+                if sha256 in existing_items:
+                    has_thumb, has_preview = existing_items[sha256]
+                    updated_fields = {}
+                    
+                    if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
+                        if not has_thumb:
+                            thumb_path = generate_thumbnail(file_path, sha256)
+                            if thumb_path:
+                                updated_fields["thumb_path"] = thumb_path
+                        if not has_preview:
+                            preview_path = generate_preview(file_path, sha256)
+                            if preview_path:
+                                updated_fields["preview_path"] = preview_path
+                                
+                    if updated_fields:
+                        from backend.db.models import MediaItem
+                        session.query(MediaItem).filter(MediaItem.sha256 == sha256).update(updated_fields)
+                        session.commit()
+                        existing_items[sha256] = (
+                            has_thumb or "thumb_path" in updated_fields,
+                            has_preview or "preview_path" in updated_fields
+                        )
+
                     result.duplicates_skipped += 1
                     # Throttled progress update for duplicate skips
                     if task_id and (processed % 100 == 0 or processed == total_files):
@@ -363,7 +385,10 @@ def parse_takeout_directory(
                         )
                     continue
 
-                existing_hashes.add(sha256)
+                existing_items[sha256] = (
+                    generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS,
+                    generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS
+                )
 
                 # 2. pHash
                 phash = compute_phash(file_path)
@@ -389,7 +414,7 @@ def parse_takeout_directory(
                 # 6. Thumbnails
                 thumb_path = None
                 preview_path = None
-                if generate_thumbs and ext in settings.SUPPORTED_IMAGE_EXTENSIONS:
+                if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
                     thumb_path = generate_thumbnail(file_path, sha256)
                     preview_path = generate_preview(file_path, sha256)
 

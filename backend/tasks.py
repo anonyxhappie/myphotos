@@ -182,10 +182,10 @@ def task_generate_thumbnails(media_item_ids: list[str] | None = None) -> dict:
         if media_item_ids:
             query = session.query(MediaItem).filter(MediaItem.id.in_(media_item_ids))
         else:
-            # Find all image items missing thumbnails
+            # Find all image and video items missing thumbnails
             query = session.query(MediaItem).filter(
                 MediaItem.thumb_path.is_(None),
-                MediaItem.mime_type.like("image/%"),
+                (MediaItem.mime_type.like("image/%") | MediaItem.mime_type.like("video/%")),
             )
 
         items = query.all()
@@ -390,3 +390,14 @@ def task_process_ml_pipeline() -> dict:
     summary = {"total_processed": total_processed}
     logger.info("ML pipeline complete: %s", summary)
     return summary
+
+
+@celery_app.task
+def task_scan_tag(tag_id: str, confidence_threshold: float = 0.17, task_id: str | None = None) -> dict:
+    """Background task: Scan all media items to assign a tag semantically."""
+    from backend.services.tag_scanner import scan_tag
+    
+    logger.info("Starting background tag scan for tag_id: %s", tag_id)
+    with SessionLocal() as session:
+        return scan_tag(session, tag_id, confidence_threshold=confidence_threshold, task_id=task_id)
+

@@ -44,8 +44,8 @@ class Settings:
     LANCEDB_PATH: Path = Path(
         os.environ.get("MYPHOTOS_LANCEDB_PATH", str(PROJECT_ROOT / "data" / "lancedb"))
     )
-    CLIP_MODEL_NAME: str = "ViT-B-32"
-    CLIP_PRETRAINED: str = "laion2b_s34b_b79k"
+    CLIP_MODEL_NAME: str = "ViT-L-14"
+    CLIP_PRETRAINED: str = "openai"
     DEEPFACE_MODEL_NAME: str = "Facenet"
 
     # -- Thumbnail sizes ---------------------------------------------------

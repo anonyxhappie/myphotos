@@ -17,6 +17,8 @@ import LockedFolder from './components/LockedFolder';
 import PeoplePetsPage from './pages/PeoplePetsPage';
 import PersonViewPage from './pages/PersonViewPage';
 import type { PersonResponse } from './api/people';
+import TagsPage from './pages/TagsPage';
+import TagViewPage from './pages/TagViewPage';
 
 export default function App() {
   const navigate = useNavigate();
@@ -286,6 +288,10 @@ export default function App() {
             <Route path="/folders" element={<Folders />} />
             <Route path="/folders/:id" element={<FolderDetail onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
             <Route path="/locked" element={<LockedFolder onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            
+            {/* Tags */}
+            <Route path="/tags" element={<TagsPage scanProgress={scanProgress} onScanStarted={handleScanStarted} />} />
+            <Route path="/tags/:id" element={<TagViewPage onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} scanProgress={scanProgress} onScanStarted={handleScanStarted} />} />
             
             {/* People & Pets */}
             <Route path="/people" element={

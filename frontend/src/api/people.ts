@@ -52,3 +52,15 @@ export async function triggerClusterFaces(): Promise<{status: string, people_cre
   }
   return response.json();
 }
+
+export async function bulkDeletePeoplePets(personIds: string[], deletePets: boolean): Promise<{status: string}> {
+  const response = await fetch(`/api/people/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ person_ids: personIds, delete_pets: deletePets }),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to bulk delete people and pets');
+  }
+  return response.json();
+}

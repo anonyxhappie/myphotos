@@ -19,6 +19,6 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
-    worker_pool="solo",
-    worker_concurrency=1
+    worker_pool="threads",
+    worker_concurrency=2
 )

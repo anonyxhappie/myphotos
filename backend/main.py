@@ -40,6 +40,9 @@ from backend.schemas import (
     BulkDeleteRequest,
     PersonResponse,
     PersonUpdate,
+    BulkDeletePeoplePetsRequest,
+    TagCreate,
+    TagWithCount,
 )
 
 logger = logging.getLogger(__name__)
@@ -1232,6 +1235,148 @@ def add_media_to_album(album_id: str, req: AlbumMediaAdd, db: Session = Depends(
     db.commit()
     return {"status": "success"}
 
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  Tags                                                                    ║
+# ╚══════════════════════════════════════════════════════════════════════════╗
+
+@app.get("/api/tags", response_model=list[TagWithCount])
+def get_tags(source: Optional[str] = None, db: Session = Depends(get_db)):
+    """List all tags with their media counts."""
+    from backend.schemas import TagWithCount
+    query = db.query(Tag)
+    if source:
+        query = query.filter(Tag.source == source)
+    tags = query.all()
+    results = []
+    for tag in tags:
+        count = tag.media_items.count()
+        results.append(
+            TagWithCount(
+                id=tag.id,
+                name=tag.name,
+                source=tag.source,
+                media_count=count
+            )
+        )
+    results.sort(key=lambda t: (-t.media_count, t.name))
+    return results
+
+@app.post("/api/tags", response_model=TagWithCount)
+def create_tag(req: TagCreate, db: Session = Depends(get_db)):
+    """Create a new tag and immediately trigger background scan."""
+    from backend.schemas import TagWithCount
+    name_clean = req.name.strip()
+    if not name_clean:
+        raise HTTPException(400, "Tag name cannot be empty")
+        
+    tag = db.query(Tag).filter(Tag.name == name_clean).first()
+    if tag:
+        return TagWithCount(
+            id=tag.id,
+            name=tag.name,
+            source=tag.source,
+            media_count=tag.media_items.count()
+        )
+        
+    tag = Tag(name=name_clean, source="user")
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    
+    from backend.tasks import task_scan_tag
+    task_id = f"tag-scan-{tag.id}"
+    task_scan_tag.delay(tag.id, confidence_threshold=0.17, task_id=task_id)
+    
+    return TagWithCount(
+        id=tag.id,
+        name=tag.name,
+        source=tag.source,
+        media_count=0
+    )
+
+@app.delete("/api/tags/{tag_id}")
+def delete_tag(tag_id: str, db: Session = Depends(get_db)):
+    """Delete a tag."""
+    tag = db.get(Tag, tag_id)
+    if not tag:
+        raise HTTPException(404, "Tag not found")
+    db.delete(tag)
+    db.commit()
+    return {"status": "success"}
+
+@app.get("/api/tags/{tag_id}/media", response_model=TimelineResponse)
+def get_tag_media(tag_id: str, db: Session = Depends(get_db)):
+    """Get all media items for a tag."""
+    tag = db.get(Tag, tag_id)
+    if not tag:
+        raise HTTPException(404, "Tag not found")
+        
+    sort_col = func.coalesce(
+        MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
+    )
+    items = tag.media_items.order_by(sort_col.desc(), MediaItem.id.desc()).all()
+    
+    summaries = []
+    for item in items:
+        is_online = item.volume.is_online if item.volume else True
+        summaries.append(
+            MediaItemSummary(
+                id=item.id,
+                sha256=item.sha256,
+                thumb_path=item.thumb_path,
+                date_taken=item.date_taken,
+                date_modified=item.date_modified,
+                width=item.width,
+                height=item.height,
+                mime_type=item.mime_type,
+                is_favorite=item.is_favorite,
+                is_locked=item.is_locked,
+                is_online=is_online,
+            )
+        )
+        
+    total_size = sum(item.file_size_bytes or 0 for item in items)
+
+    return TimelineResponse(
+        items=summaries,
+        next_cursor=None,
+        total_count=len(summaries),
+        total_size_bytes=total_size,
+    )
+
+@app.post("/api/tags/{tag_id}/scan", response_model=ScanEnqueuedResponse)
+def trigger_tag_scan(tag_id: str, db: Session = Depends(get_db)):
+    """Trigger a scan for a tag."""
+    tag = db.get(Tag, tag_id)
+    if not tag:
+        raise HTTPException(404, "Tag not found")
+        
+    from backend.tasks import task_scan_tag
+    task_id = f"tag-scan-{tag.id}"
+    
+    task_scan_tag.delay(tag.id, confidence_threshold=0.17, task_id=task_id)
+    
+    return ScanEnqueuedResponse(
+        task_id=task_id,
+        message=f"Tag scan enqueued for '{tag.name}'",
+        path=f"Tag: {tag.name}"
+    )
+
+@app.get("/api/tags/{tag_id}/scan/status", response_model=ScanStatusResponse)
+def get_tag_scan_status(tag_id: str):
+    """Get scan progress for a tag."""
+    from backend.services.task_control import read_task_state
+    task_id = f"tag-scan-{tag_id}"
+    state = read_task_state(task_id)
+    if not state:
+        return ScanStatusResponse(
+            task_id=task_id,
+            status="pending",
+        )
+    return ScanStatusResponse.model_validate(state)
+
+
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  People & Pets                                                           ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -1332,6 +1477,20 @@ def get_person_media(person_id: str, db: Session = Depends(get_db)):
         total_count=len(summaries),
         total_size_bytes=total_size,
     )
+
+@app.post("/api/people/bulk-delete")
+def bulk_delete_people_pets(req: BulkDeletePeoplePetsRequest, db: Session = Depends(get_db)):
+    """Bulk delete people and optionally pets tags."""
+    if req.person_ids:
+        people = db.execute(select(Person).where(Person.id.in_(req.person_ids))).scalars().all()
+        for p in people:
+            db.delete(p)
+    if req.delete_pets:
+        tags = db.execute(select(Tag).where(Tag.name.in_(["Dog", "Cat"]))).scalars().all()
+        for t in tags:
+            db.delete(t)
+    db.commit()
+    return {"status": "success"}
 
 @app.get("/api/faces/{face_id}/crop")
 def get_face_crop(face_id: str, db: Session = Depends(get_db)):

@@ -17,6 +17,7 @@ huey>=2.5.0
 # -- Image processing (thumbnails) ----------------------------------------
 Pillow>=10.3.0
 pillow-heif>=0.16.0             # HEIC/HEIF support
+opencv-python-headless>=4.8.0   # video frame extraction for thumbnails
 
 # -- Hashing ---------------------------------------------------------------
 imagehash>=4.3.1                # perceptual hashing (pHash)

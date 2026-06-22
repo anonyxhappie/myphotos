@@ -42,6 +42,39 @@ class SyncEventHandler(FileSystemEventHandler):
                     from backend.db.engine import log_audit_entry
                     log_audit_entry("file_synced", "info", f"Real-time sync: ingested {path.name} in {path.parent}")
                     
+                    # Run ML analysis on the new item to generate CLIP embedding
+                    item = session.query(MediaItem).filter(MediaItem.original_path == str(path)).first()
+                    if item and item.mime_type and item.mime_type.startswith("image/"):
+                        try:
+                            from backend.services.ml import index_unprocessed_items
+                            index_unprocessed_items(session, batch_size=1)
+                            
+                            # Match the item against all existing tags
+                            from backend.db.models import Tag
+                            from backend.db.vector import get_clip_table
+                            from backend.services.ml import generate_text_embedding
+                            import numpy as np
+                            
+                            tags = session.query(Tag).all()
+                            if tags:
+                                clip_table = get_clip_table()
+                                results = clip_table.search().where(f"media_id = '{item.id}'").to_list()
+                                if results:
+                                    item_vector = results[0]["vector"]
+                                    item_arr = np.array(item_vector)
+                                    
+                                    for tag in tags:
+                                        tag_vector = generate_text_embedding(tag.name)
+                                        if tag_vector:
+                                            tag_arr = np.array(tag_vector)
+                                            similarity = np.dot(item_arr, tag_arr)
+                                            if similarity >= 0.2: # default threshold
+                                                if tag not in item.tags:
+                                                    item.tags.append(tag)
+                                    session.commit()
+                        except Exception as ml_err:
+                            logger.error("Failed to run real-time ML tag matching: %s", ml_err)
+                    
                     # Notify frontend via redis pubsub to trigger a timeline refresh
                     import redis
                     import json

@@ -8,6 +8,7 @@ import type {
   SyncedDirectory,
   Album,
   AuditLog,
+  TagWithCount,
 } from './types';
 
 // ─── Base URL ───────────────────────────────────────────────────
@@ -254,4 +255,39 @@ export async function addDirectoryToAlbums(dirId: string, albumIds: string[]): P
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ album_ids: albumIds }),
   });
+}
+
+// ─── Tags ───────────────────────────────────────────────────────
+
+export async function fetchTags(source?: string): Promise<TagWithCount[]> {
+  const url = source ? `${BASE}/tags?source=${encodeURIComponent(source)}` : `${BASE}/tags`;
+  return fetchJson<TagWithCount[]>(url);
+}
+
+export async function createTag(name: string): Promise<TagWithCount> {
+  return fetchJson<TagWithCount>(`${BASE}/tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteTag(tagId: string): Promise<{status: string}> {
+  return fetchJson<{status: string}>(`${BASE}/tags/${tagId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchTagMedia(tagId: string): Promise<TimelineResponse> {
+  return fetchJson<TimelineResponse>(`${BASE}/tags/${tagId}/media`);
+}
+
+export async function triggerTagScan(tagId: string): Promise<ScanEnqueuedResponse> {
+  return fetchJson<ScanEnqueuedResponse>(`${BASE}/tags/${tagId}/scan`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchTagScanStatus(tagId: string): Promise<ScanStatusResponse> {
+  return fetchJson<ScanStatusResponse>(`${BASE}/tags/${tagId}/scan/status`);
 }

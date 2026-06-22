@@ -156,3 +156,11 @@ export interface AuditLog {
   level: 'info' | 'success' | 'warning' | 'error';
   details: string | null;
 }
+
+export interface TagWithCount {
+  id: string;
+  name: string;
+  source: string;
+  media_count: number;
+}
+

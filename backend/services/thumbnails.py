@@ -78,6 +78,31 @@ def _shard_dir(base_dir: Path, sha256: str) -> Path:
     return d
 
 
+def _extract_video_frame(video_path: str | Path) -> Optional[Image.Image]:
+    """Extract a frame from a video file as a PIL Image at 1 second offset (or fallback to start)."""
+    try:
+        import cv2
+        vidcap = cv2.VideoCapture(str(video_path))
+        if not vidcap.isOpened():
+            logger.warning("Could not open video file: %s", video_path)
+            return None
+        # Try to seek to 1000ms (1 second)
+        vidcap.set(cv2.CAP_PROP_POS_MSEC, 1000)
+        success, frame = vidcap.read()
+        if not success:
+            # Fallback to the first frame
+            vidcap.set(cv2.CAP_PROP_POS_MSEC, 0)
+            success, frame = vidcap.read()
+        vidcap.release()
+        if success:
+            # Convert BGR (OpenCV) to RGB (Pillow)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            return Image.fromarray(rgb_frame)
+    except Exception as exc:
+        logger.warning("Error extracting video frame from %s: %s", video_path, exc)
+    return None
+
+
 def generate_thumbnail(original_path: str | Path, sha256: str) -> Optional[str]:
     """Generate a 256 px WebP thumbnail.
 
@@ -90,7 +115,15 @@ def generate_thumbnail(original_path: str | Path, sha256: str) -> Optional[str]:
         return str(out_path.relative_to(settings.CACHE_DIR))
 
     try:
-        with Image.open(original_path) as img:
+        ext = Path(original_path).suffix.lower()
+        if ext in settings.SUPPORTED_VIDEO_EXTENSIONS:
+            img = _extract_video_frame(original_path)
+            if not img:
+                return None
+        else:
+            img = Image.open(original_path)
+
+        with img:
             img.thumbnail(
                 (settings.THUMB_SIZE, settings.THUMB_SIZE),
                 Image.Resampling.LANCZOS,
@@ -119,7 +152,15 @@ def generate_preview(original_path: str | Path, sha256: str) -> Optional[str]:
         return str(out_path.relative_to(settings.CACHE_DIR))
 
     try:
-        with Image.open(original_path) as img:
+        ext = Path(original_path).suffix.lower()
+        if ext in settings.SUPPORTED_VIDEO_EXTENSIONS:
+            img = _extract_video_frame(original_path)
+            if not img:
+                return None
+        else:
+            img = Image.open(original_path)
+
+        with img:
             img.thumbnail(
                 (settings.PREVIEW_SIZE, settings.PREVIEW_SIZE),
                 Image.Resampling.LANCZOS,
@@ -133,6 +174,7 @@ def generate_preview(original_path: str | Path, sha256: str) -> Optional[str]:
     except Exception as exc:
         logger.warning("Preview generation failed for %s: %s", original_path, exc)
         return None
+
 
 
 # ---------------------------------------------------------------------------
