@@ -333,12 +333,23 @@ def toggle_lock(media_id: str, db: Session = Depends(get_db)):
 @app.post("/api/media/delete")
 def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
     """Bulk delete media items from database, cache files, and LanceDB vectors."""
+    import uuid
     from backend.db.vector import get_clip_table, get_face_table
     
     if not req.media_ids:
         return {"status": "success", "deleted_count": 0}
         
-    items = db.query(MediaItem).filter(MediaItem.id.in_(req.media_ids)).all()
+    valid_ids = []
+    for mid in req.media_ids:
+        try:
+            valid_ids.append(str(uuid.UUID(mid)))
+        except ValueError:
+            pass
+
+    if not valid_ids:
+        return {"status": "success", "deleted_count": 0}
+
+    items = db.query(MediaItem).filter(MediaItem.id.in_(valid_ids)).all()
     deleted_count = len(items)
     
     for item in items:
@@ -364,13 +375,13 @@ def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
     try:
         clip_table = get_clip_table()
         # LanceDB SQL filter syntax
-        clip_table.delete(f"media_id in {tuple(req.media_ids) if len(req.media_ids) > 1 else f'(\"{req.media_ids[0]}\")'}")
+        clip_table.delete(f"media_id in {tuple(valid_ids) if len(valid_ids) > 1 else f'(\"{valid_ids[0]}\")'}")
     except Exception as e:
          logger.warning("Failed to delete from clip vector table: %s", e)
          
     try:
         face_table = get_face_table()
-        face_table.delete(f"media_id in {tuple(req.media_ids) if len(req.media_ids) > 1 else f'(\"{req.media_ids[0]}\")'}")
+        face_table.delete(f"media_id in {tuple(valid_ids) if len(valid_ids) > 1 else f'(\"{valid_ids[0]}\")'}")
     except Exception as e:
          logger.warning("Failed to delete from face vector table: %s", e)
          
