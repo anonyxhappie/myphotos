@@ -14,8 +14,13 @@ def _compute_total_files(path_obj: Path, path_str: str):
     total_files = 0
     try:
         if path_obj.is_dir():
-            for dirpath, _dirnames, filenames in os.walk(path_obj):
+            for dirpath, dirnames, filenames in os.walk(path_obj):
+                # Ignore hidden directories (starting with '.')
+                dirnames[:] = [d for d in dirnames if not d.startswith('.')]
                 for fname in filenames:
+                    # Ignore hidden files (starting with '.') and macOS shadow/metadata files (starting with '._')
+                    if fname.startswith('.'):
+                        continue
                     ext = Path(fname).suffix.lower()
                     if ext in settings.SUPPORTED_EXTENSIONS:
                         total_files += 1

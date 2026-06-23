@@ -71,19 +71,43 @@ class ScanResult:
 # Hashing
 # ---------------------------------------------------------------------------
 def compute_sha256(file_path: str | Path) -> str:
-    """Compute SHA-256 hex digest, streaming in 64 KiB chunks.
-
-    Constant memory usage regardless of file size — safe for multi-GB
-    video files.
+    """Compute a fast pseudo-SHA-256 hash using file metadata (size, mtime)
+    and a sample of the file content (first and last 100 KiB).
+    
+    This avoids reading the entire file, which is extremely slow on
+    external drives, network shares, or for large video files.
     """
-    h = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        while True:
-            chunk = f.read(settings.SHA256_CHUNK_SIZE)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
+    path = Path(file_path)
+    try:
+        stat = path.stat()
+        size = stat.st_size
+        mtime = stat.st_mtime
+        
+        # We hash the metadata first
+        h = hashlib.sha256()
+        h.update(f"{size}_{mtime}".encode())
+        
+        # If the file is small, we read it completely
+        if size <= 200_000:
+            with open(path, "rb") as f:
+                h.update(f.read())
+        else:
+            # Otherwise, read first 100 KiB and last 100 KiB
+            with open(path, "rb") as f:
+                h.update(f.read(100_000))
+                f.seek(size - 100_000)
+                h.update(f.read(100_000))
+        return h.hexdigest()
+    except Exception:
+        # Fallback to standard full file hash if stat or seek fails
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
 
 
 def compute_phash(file_path: str | Path) -> Optional[str]:
@@ -289,6 +313,8 @@ def scan_directory(
     import time
     initial_progress = initial_progress or {}
     start_time = float(initial_progress.get("start_time") or time.time())
+    last_update_time = 0.0
+    last_update_processed = 0
     root = Path(root_path).resolve()
     if not root.is_dir():
         raise ValueError(f"Not a directory: {root}")
@@ -302,8 +328,13 @@ def scan_directory(
 
     media_files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
+        # Ignore hidden directories (starting with '.')
+        dirnames[:] = [d for d in dirnames if not d.startswith('.')]
         dirnames.sort()
         for fname in sorted(filenames):
+            # Ignore hidden files (starting with '.') and macOS shadow/metadata files (starting with '._')
+            if fname.startswith('.'):
+                continue
             if Path(fname).suffix.lower() in settings.SUPPORTED_EXTENSIONS:
                 media_files.append(Path(dirpath) / fname)
     total_files = len(media_files)
@@ -359,6 +390,25 @@ def scan_directory(
 
     from backend.services.task_control import clear_task_control, pause_requested
 
+    def report_progress_if_needed(current_path: Path) -> None:
+        nonlocal last_update_time, last_update_processed
+        if task_id:
+            now = time.time()
+            if (now - last_update_time >= 3.0 and processed - last_update_processed >= 100) or processed == total_files:
+                _update_task_progress(
+                    task_id,
+                    "running",
+                    total_found=total_files,
+                    processed=processed,
+                    new_inserted=result.new_inserted,
+                    duplicates_skipped=result.duplicates_skipped,
+                    errors=result.errors,
+                    current_file=str(current_path),
+                    start_time=start_time,
+                )
+                last_update_time = time.time()
+                last_update_processed = processed
+
     for file_path in media_files[start_index:]:
             if pause_requested(task_id):
                 flush_batch()
@@ -413,19 +463,7 @@ def scan_directory(
                         )
 
                     result.duplicates_skipped += 1
-                    # Throttled progress update for duplicate skips
-                    if task_id and (processed % 100 == 0 or processed == total_files):
-                        _update_task_progress(
-                            task_id,
-                            "running",
-                            total_found=total_files,
-                            processed=processed,
-                            new_inserted=result.new_inserted,
-                            duplicates_skipped=result.duplicates_skipped,
-                            errors=result.errors,
-                            current_file=str(file_path),
-                            start_time=start_time,
-                        )
+                    report_progress_if_needed(file_path)
                     continue
 
                 # Mark as seen to avoid processing the same file twice
@@ -435,8 +473,8 @@ def scan_directory(
                     generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS
                 )
 
-                # 2. pHash (images only)
-                phash = compute_phash(file_path)
+                # 2. pHash (images only) - Defer if generate_thumbs is False to speed up scanning
+                phash = compute_phash(file_path) if generate_thumbs else None
 
                 # 3. EXIF metadata
                 exif = extract_exif(file_path)
@@ -481,19 +519,7 @@ def scan_directory(
                 result.error_details.append(error_msg)
                 logger.warning("Scan error: %s", error_msg)
 
-            # Report progress for processed files
-            if task_id:
-                _update_task_progress(
-                    task_id,
-                    "running",
-                    total_found=total_files,
-                    processed=processed,
-                    new_inserted=result.new_inserted,
-                    duplicates_skipped=result.duplicates_skipped,
-                    errors=result.errors,
-                    current_file=str(file_path),
-                    start_time=start_time,
-                )
+            report_progress_if_needed(file_path)
 
     # Flush remaining records
     flush_batch()
@@ -555,7 +581,7 @@ def scan_file(
                     session.commit()
             return False
             
-        phash = compute_phash(file_path)
+        phash = compute_phash(file_path) if generate_thumbs else None
         exif = extract_exif(file_path)
         stat = file_path.stat()
         mime_type, _ = mimetypes.guess_type(str(file_path))

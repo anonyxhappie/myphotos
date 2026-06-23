@@ -12,6 +12,7 @@ import {
   retryScan,
   resyncAll,
   retrainML,
+  deleteScan,
 } from '../api/client';
 
 interface SettingsProps {
@@ -19,9 +20,15 @@ interface SettingsProps {
   activeScans?: { taskId: string; path: string; mode?: 'scan' | 'takeout' }[];
   scanProgress?: Record<string, ScanStatusResponse>;
   onScanUpdated?: (scan: ScanStatusResponse) => void;
+  onScanDeleted?: (taskId: string) => void;
 }
 
-export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdated }: SettingsProps) {
+export default function Settings({
+  onScanStarted,
+  scanProgress = {},
+  onScanUpdated,
+  onScanDeleted,
+}: SettingsProps) {
   const [directories, setDirectories] = useState<SyncedDirectory[]>([]);
   const [loading, setLoading] = useState(true);
   const [resetting, setResetting] = useState(false);
@@ -122,9 +129,14 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
 
   const handleScanAction = async (
     taskId: string,
-    action: 'pause' | 'resume' | 'retry',
+    action: 'pause' | 'resume' | 'retry' | 'delete',
   ) => {
     try {
+      if (action === 'delete') {
+        await deleteScan(taskId);
+        onScanDeleted?.(taskId);
+        return;
+      }
       const updated =
         action === 'pause'
           ? await pauseScan(taskId)
@@ -258,6 +270,7 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
                   const canPause = scan.status === 'pending' || scan.status === 'running';
                   const canResume = scan.status === 'paused';
                   const canRetry = scan.status === 'error';
+                  const canRemove = scan.status === 'paused' || scan.status === 'error' || scan.status === 'complete';
 
                   return (
                     <div
@@ -326,6 +339,15 @@ export default function Settings({ onScanStarted, scanProgress = {}, onScanUpdat
                               className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 transition-colors"
                             >
                               Retry
+                            </button>
+                          )}
+                          {canRemove && (
+                            <button
+                              type="button"
+                              onClick={() => void handleScanAction(scan.task_id, 'delete')}
+                              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 transition-colors"
+                            >
+                              Remove
                             </button>
                           )}
                         </div>

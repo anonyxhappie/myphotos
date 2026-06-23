@@ -29,6 +29,13 @@ class SyncEventHandler(FileSystemEventHandler):
 
     def process_path(self, file_path: str):
         path = Path(file_path)
+        # Ignore hidden files (starting with '.') and macOS shadow/metadata files (starting with '._')
+        if path.name.startswith('.'):
+            return
+        # Ignore files inside hidden directories
+        for part in path.parts:
+            if part.startswith('.') and part != '.':
+                return
         if path.is_file() and path.suffix.lower() in settings.SUPPORTED_EXTENSIONS:
             self.executor.submit(self._run_scan, path)
 

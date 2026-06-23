@@ -35,6 +35,19 @@ def read_task_state(task_id: str) -> dict[str, Any] | None:
         return None
 
 
+_redis_client = None
+
+
+def _get_redis_client() -> Any:
+    global _redis_client
+    if _redis_client is None:
+        import redis
+
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        _redis_client = redis.Redis.from_url(redis_url)
+    return _redis_client
+
+
 def write_task_progress(
     task_id: str | None,
     status: str,
@@ -93,10 +106,7 @@ def write_task_progress(
     temporary_path.replace(state_path)
 
     try:
-        import redis
-
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-        client = redis.Redis.from_url(redis_url)
+        client = _get_redis_client()
         client.publish("scan_progress", json.dumps(payload))
     except Exception:
         pass
@@ -141,3 +151,39 @@ def list_task_states(*, include_complete: bool = False, limit: int = 50) -> list
             continue
     states.sort(key=lambda item: item[0], reverse=True)
     return [state for _, state in states[:limit]]
+
+
+def cleanup_stale_tasks(active_paths: list[str]) -> None:
+    """Transition running/pausing tasks to paused on startup, and purge tasks for unmonitored folders."""
+    tasks_dir = _tasks_dir()
+    for filepath in tasks_dir.glob("*.json"):
+        if filepath.name.endswith(".control.json"):
+            continue
+        try:
+            with filepath.open("r") as handle:
+                state = json.load(handle)
+            
+            status = state.get("status")
+            task_id = state.get("task_id")
+            if not task_id:
+                continue
+
+            # Check if it's an orphaned directory scan
+            mode = state.get("mode", "scan")
+            scan_path = state.get("path")
+            
+            if mode == "scan" and scan_path and scan_path != "AI Media Analysis":
+                # Normalize paths for comparison
+                norm_scan_path = os.path.normpath(scan_path)
+                norm_active_paths = [os.path.normpath(p) for p in active_paths]
+                if norm_scan_path not in norm_active_paths:
+                    # Orphaned scan, delete it
+                    filepath.unlink(missing_ok=True)
+                    task_control_path(task_id).unlink(missing_ok=True)
+                    continue
+
+            if status in {"running", "pausing", "pending"}:
+                write_task_progress(task_id, "paused")
+        except Exception:
+            continue
+

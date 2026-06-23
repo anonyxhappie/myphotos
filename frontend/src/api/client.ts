@@ -137,6 +137,14 @@ export async function retryScan(taskId: string): Promise<ScanStatusResponse> {
   });
 }
 
+export async function deleteScan(
+  taskId: string,
+): Promise<{ status: string; message: string }> {
+  return fetchJson<{ status: string; message: string }>(`${BASE}/scan/${taskId}`, {
+    method: 'DELETE',
+  });
+}
+
 // ─── ML Pipeline & Search ───────────────────────────────────────
 
 export async function triggerMLPipeline(): Promise<ScanEnqueuedResponse> {

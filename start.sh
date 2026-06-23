@@ -44,6 +44,11 @@ if lsof -i :5173 >/dev/null 2>&1; then
   sleep 1
 fi
 
+if [ -f backend/.env ]; then
+  echo "Loading environment variables from backend/.env..."
+  export $(grep -v '^#' backend/.env | xargs)
+fi
+
 source .venv/bin/activate
 echo "Starting MyPhotos Stack..."
 echo "=========================="

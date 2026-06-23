@@ -95,10 +95,12 @@ def task_scan_directory(
 
     try:
         with SessionLocal() as session:
+            # Scanning is much faster with generate_thumbs=False.
+            # We defer thumbnail generation to the concurrent background task.
             result = scan_directory(
                 root_path,
                 session,
-                generate_thumbs=generate_thumbs,
+                generate_thumbs=False,
                 task_id=task_id,
                 resume_after=resume_after,
                 initial_progress=initial_progress,
@@ -135,8 +137,14 @@ def task_scan_directory(
             f"Completed sync of {root_path}: found {result.total_found} files, inserted {result.new_inserted} new, skipped {result.duplicates_skipped} duplicates."
         )
 
+        if generate_thumbs:
+            try:
+                task_generate_thumbnails.delay()
+            except Exception as thumb_exc:
+                logger.warning("Thumbnail generation automatic trigger failed: %s", thumb_exc)
+
         try:
-            task_process_ml_pipeline()
+            task_process_ml_pipeline.delay()
         except Exception as ml_exc:
             logger.warning("ML pipeline automatic trigger failed: %s", ml_exc)
 
@@ -197,17 +205,24 @@ def task_generate_thumbnails(media_item_ids: list[str] | None = None) -> dict:
         work = [(item.original_path, item.sha256) for item in items]
         results = generate_thumbnails_batch(work)
 
-        # Update DB with generated paths
+        # Update DB with generated paths and compute deferred pHash
         item_by_sha256 = {item.sha256: item for item in items}
         updated = 0
         for tr in results:
-            if tr.thumb_rel_path or tr.preview_rel_path:
-                item = item_by_sha256.get(tr.sha256)
-                if item:
-                    if tr.thumb_rel_path:
-                        item.thumb_path = tr.thumb_rel_path
-                    if tr.preview_rel_path:
-                        item.preview_path = tr.preview_rel_path
+            item = item_by_sha256.get(tr.sha256)
+            if item:
+                db_updated = False
+                if tr.thumb_rel_path:
+                    item.thumb_path = tr.thumb_rel_path
+                    db_updated = True
+                if tr.preview_rel_path:
+                    item.preview_path = tr.preview_rel_path
+                    db_updated = True
+                if not item.phash and tr.phash:
+                    # We use the precomputed pHash from the thread pool
+                    item.phash = tr.phash
+                    db_updated = True
+                if db_updated:
                     updated += 1
 
         session.commit()
@@ -245,10 +260,12 @@ def task_parse_takeout(
 
     try:
         with SessionLocal() as session:
+            # Takeout importing is much faster with generate_thumbs=False.
+            # We defer thumbnail generation to the concurrent background task.
             result = parse_takeout_directory(
                 takeout_root,
                 session,
-                generate_thumbs=generate_thumbs,
+                generate_thumbs=False,
                 task_id=task_id,
                 resume_after=resume_after,
                 initial_progress=initial_progress,
@@ -277,8 +294,15 @@ def task_parse_takeout(
             start_time=start_time,
             result=summary,
         )
+
+        if generate_thumbs:
+            try:
+                task_generate_thumbnails.delay()
+            except Exception as thumb_exc:
+                logger.warning("Thumbnail generation automatic trigger failed: %s", thumb_exc)
+
         try:
-            task_process_ml_pipeline()
+            task_process_ml_pipeline.delay()
         except Exception as ml_exc:
             logger.warning("ML pipeline automatic trigger failed: %s", ml_exc)
 
@@ -365,6 +389,8 @@ def task_process_ml_pipeline() -> dict:
             
             if result.get("status") == "idle" or processed == 0:
                 break
+            
+            time.sleep(0.1)
                 
         if total_to_process > 0:
             write_task_progress(

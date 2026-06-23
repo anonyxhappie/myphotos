@@ -118,7 +118,6 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
         return {"processed": 0, "status": "idle"}
         
     clip_table = get_clip_table()
-    records = []
     processed_count = 0
     
     faces_found = 0
@@ -222,21 +221,20 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
                                 labels_found += 1
                 
                 vector = image_features.cpu().numpy()[0].tolist()
-                records.append({
+                clip_table.add([{
                     "media_id": item.id,
                     "vector": vector
-                })
+                }])
                 item.clip_embedded = True
                 
+            db.commit()
+            db.expire_all()
             processed_count += 1
             
         except Exception as e:
+            db.rollback()
+            db.expire_all()
             logger.error(f"Failed to process {item.original_path}: {e}")
-            
-    if records:
-        clip_table.add(records)
-    
-    db.commit()
         
     return {"processed": processed_count, "status": "active", "faces_found": faces_found, "labels_found": labels_found}
 

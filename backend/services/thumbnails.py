@@ -64,6 +64,7 @@ class ThumbnailResult:
     sha256: str
     thumb_rel_path: Optional[str] = None    # relative to CACHE_DIR
     preview_rel_path: Optional[str] = None  # relative to CACHE_DIR
+    phash: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -222,6 +223,10 @@ def _generate_single(original_path: str, sha256: str) -> ThumbnailResult:
     try:
         result.thumb_rel_path = generate_thumbnail(original_path, sha256)
         result.preview_rel_path = generate_preview(original_path, sha256)
+        
+        # Compute pHash concurrently inside the thread pool
+        from backend.services.scanner import compute_phash
+        result.phash = compute_phash(original_path)
     except Exception as exc:
         result.error = str(exc)
     return result

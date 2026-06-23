@@ -178,6 +178,15 @@ export default function App() {
     }
   }, [refreshTotalCount, scheduleGalleryRefresh]);
 
+  const handleScanDeleted = useCallback((taskId: string) => {
+    setScanProgress((prev) => {
+      const next = { ...prev };
+      delete next[taskId];
+      return next;
+    });
+    setActiveScans((prev) => prev.filter((s) => s.taskId !== taskId));
+  }, []);
+
   // Restore persisted scan tasks after reload
   useEffect(() => {
     let isActive = true;
@@ -300,6 +309,7 @@ export default function App() {
                   activeScans={activeScans} 
                   scanProgress={scanProgress}
                   onScanUpdated={applyScanUpdate}
+                  onScanDeleted={handleScanDeleted}
                 />
               } 
             />

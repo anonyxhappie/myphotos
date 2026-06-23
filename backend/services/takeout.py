@@ -216,6 +216,8 @@ def parse_takeout_directory(
     import time
     initial_progress = initial_progress or {}
     start_time = float(initial_progress.get("start_time") or time.time())
+    last_update_time = 0.0
+    last_update_processed = 0
     root = Path(takeout_root).resolve()
 
     # Auto-detect the Google Photos subdirectory
@@ -237,8 +239,13 @@ def parse_takeout_directory(
 
     media_files: list[Path] = []
     for dirpath_str, dirs, filenames in os.walk(root):
+        # Ignore hidden directories (starting with '.')
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
         dirs.sort()
         for fname in sorted(filenames):
+            # Ignore hidden files (starting with '.') and macOS shadow/metadata files (starting with '._')
+            if fname.startswith('.'):
+                continue
             if fname.endswith(".json"):
                 continue
             if Path(fname).suffix.lower() in settings.SUPPORTED_EXTENSIONS:
@@ -312,6 +319,25 @@ def parse_takeout_directory(
 
     from backend.services.task_control import clear_task_control, pause_requested
 
+    def report_progress_if_needed(current_path: Path) -> None:
+        nonlocal last_update_time, last_update_processed
+        if task_id:
+            now = time.time()
+            if (now - last_update_time >= 3.0 and processed - last_update_processed >= 100) or processed == total_files:
+                _update_task_progress(
+                    task_id,
+                    "running",
+                    total_found=total_files,
+                    processed=processed,
+                    new_inserted=result.new_inserted,
+                    duplicates_skipped=result.duplicates_skipped,
+                    errors=result.errors,
+                    current_file=str(current_path),
+                    start_time=start_time,
+                )
+                last_update_time = time.time()
+                last_update_processed = processed
+
     for file_path in media_files[start_index:]:
             if pause_requested(task_id):
                 flush_batch()
@@ -370,19 +396,7 @@ def parse_takeout_directory(
                         )
 
                     result.duplicates_skipped += 1
-                    # Throttled progress update for duplicate skips
-                    if task_id and (processed % 100 == 0 or processed == total_files):
-                        _update_task_progress(
-                            task_id,
-                            "running",
-                            total_found=total_files,
-                            processed=processed,
-                            new_inserted=result.new_inserted,
-                            duplicates_skipped=result.duplicates_skipped,
-                            errors=result.errors,
-                            current_file=str(file_path),
-                            start_time=start_time,
-                        )
+                    report_progress_if_needed(file_path)
                     continue
 
                 existing_items[sha256] = (
@@ -390,8 +404,8 @@ def parse_takeout_directory(
                     generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS
                 )
 
-                # 2. pHash
-                phash = compute_phash(file_path)
+                # 2. pHash - Defer if generate_thumbs is False to speed up scanning
+                phash = compute_phash(file_path) if generate_thumbs else None
 
                 # 3. EXIF metadata from the image itself
                 exif = extract_exif(file_path)
@@ -462,19 +476,7 @@ def parse_takeout_directory(
                 result.error_details.append(f"{file_path}: {exc}")
                 logger.warning("Takeout parse error: %s: %s", file_path, exc)
 
-            # Report progress for processed files
-            if task_id:
-                _update_task_progress(
-                    task_id,
-                    "running",
-                    total_found=total_files,
-                    processed=processed,
-                    new_inserted=result.new_inserted,
-                    duplicates_skipped=result.duplicates_skipped,
-                    errors=result.errors,
-                    current_file=str(file_path),
-                    start_time=start_time,
-                )
+            report_progress_if_needed(file_path)
 
     # Flush remaining
     flush_batch()

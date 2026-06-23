@@ -129,6 +129,19 @@ def _on_startup() -> None:
     settings.ensure_cache_dirs()
     logger.info("MyPhotos API ready — DB at %s", engine.url)
     
+    # Clean up stale tasks and orphaned directory scans on startup
+    try:
+        from backend.db.engine import SessionLocal
+        from backend.db.models import SyncedDirectory
+        from backend.services.task_control import cleanup_stale_tasks
+        
+        with SessionLocal() as db:
+            active_dirs = db.query(SyncedDirectory).filter(SyncedDirectory.is_active == True).all()
+            active_paths = [d.path for d in active_dirs]
+            cleanup_stale_tasks(active_paths)
+    except Exception as e:
+        logger.error("Failed to clean up stale tasks on startup: %s", e)
+
     # Start Redis Pub/Sub background listener
     import asyncio
     asyncio.create_task(redis_pubsub_listener())
@@ -736,6 +749,28 @@ def retry_scan(task_id: str) -> ScanStatusResponse:
     return _requeue_scan(task_id, retry=True)
 
 
+@app.delete("/api/scan/{task_id}")
+def delete_scan(task_id: str) -> dict[str, str]:
+    """Delete/dismiss a persisted scan task from the cache entirely."""
+    from backend.services.task_control import task_state_path, task_control_path
+    
+    state_path = task_state_path(task_id)
+    control_path = task_control_path(task_id)
+    
+    deleted = False
+    if state_path.exists():
+        state_path.unlink(missing_ok=True)
+        deleted = True
+    if control_path.exists():
+        control_path.unlink(missing_ok=True)
+        deleted = True
+        
+    if not deleted:
+        raise HTTPException(404, "Scan task not found")
+        
+    return {"status": "success", "message": f"Scan task {task_id} deleted"}
+
+
 @app.post("/api/scan/resync_all", response_model=list[ScanEnqueuedResponse])
 def resync_all(db: Session = Depends(get_db)):
     """Trigger background scans for all actively monitored directories."""
@@ -1018,8 +1053,13 @@ def get_synced_directory(id: str, db: Session = Depends(get_db)):
     try:
         path_obj = Path(d.path)
         if path_obj.is_dir():
-            for dirpath, _dirnames, filenames in os.walk(path_obj):
+            for dirpath, dirnames, filenames in os.walk(path_obj):
+                # Ignore hidden directories (starting with '.')
+                dirnames[:] = [d for d in dirnames if not d.startswith('.')]
                 for fname in filenames:
+                    # Ignore hidden files (starting with '.') and macOS shadow/metadata files (starting with '._')
+                    if fname.startswith('.'):
+                        continue
                     ext = Path(fname).suffix.lower()
                     if ext in settings.SUPPORTED_EXTENSIONS:
                         total_files += 1
@@ -1123,6 +1163,15 @@ def remove_synced_directory(id: str, db: Session = Depends(get_db)):
     # Delete the SyncedDirectory record
     db.delete(sd)
     db.commit()
+
+    # Clean up any persisted scan tasks for this directory
+    try:
+        from backend.services.task_control import cleanup_stale_tasks
+        active_dirs = db.query(SyncedDirectory).filter(SyncedDirectory.is_active == True).all()
+        active_paths = [d.path for d in active_dirs]
+        cleanup_stale_tasks(active_paths)
+    except Exception as e:
+        logger.error("Failed to clean up tasks on directory removal: %s", e)
 
     log_audit_entry(
         "sync_dir_removed", 
