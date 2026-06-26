@@ -13,6 +13,7 @@ import {
   resyncAll,
   retrainML,
   deleteScan,
+  generateMissingThumbnails,
 } from '../api/client';
 
 interface SettingsProps {
@@ -226,7 +227,15 @@ export default function Settings({
     }
   };
 
-
+  const handleGenerateThumbnails = async () => {
+    try {
+      const result = await generateMissingThumbnails();
+      alert(result.message);
+      void loadAuditLogs();
+    } catch (e) {
+      alert('Failed to generate thumbnails: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
 
   const getLevelBadgeStyles = (level: string) => {
     switch (level) {
@@ -393,6 +402,17 @@ export default function Settings({
                   </svg>
                 </button>
                 <button
+                  onClick={handleGenerateThumbnails}
+                  className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 transition-colors border border-emerald-500/20"
+                  title="Generate Missing Thumbnails"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                </button>
+                <button
                   onClick={handleResyncAll}
                   className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/5"
                   title="Resync All"
@@ -469,6 +489,10 @@ export default function Settings({
                                 {isRunning ? (
                                   <span className="text-indigo-400">
                                     Syncing: {processed} / {total} files ({percent}%)
+                                  </span>
+                                ) : dir.total_files === 0 && dir.synced_files > 0 ? (
+                                  <span>
+                                    Synced: {dir.synced_files} files
                                   </span>
                                 ) : (
                                   <span>

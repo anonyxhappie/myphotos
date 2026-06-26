@@ -1687,3 +1687,67 @@ def trigger_cluster_faces(db: Session = Depends(get_db)):
     from backend.services.ml import cluster_faces
     result = cluster_faces(db)
     return result
+
+
+@app.post("/api/settings/generate-thumbnails", response_model=dict)
+def generate_missing_thumbnails():
+    """Manually trigger background thumbnail generation for all items missing thumbnails."""
+    from backend.tasks import task_generate_thumbnails
+    from backend.db.engine import log_audit_entry
+    
+    try:
+        result = task_generate_thumbnails.delay()
+        log_audit_entry(
+            "generate_thumbnails",
+            "info",
+            f"Manually triggered background thumbnail generation task: {result.id}"
+        )
+        return {"status": "success", "message": "Thumbnail generation task enqueued", "task_id": result.id}
+    except Exception as e:
+        logger.error("Failed to enqueue thumbnail generation: %s", e)
+        # Try inline generation as fallback
+        try:
+            from backend.services.thumbnails import generate_thumbnails_batch
+            from backend.db.engine import SessionLocal
+            from backend.db.models import MediaItem
+            
+            with SessionLocal() as session:
+                items = session.query(MediaItem).filter(
+                    MediaItem.thumb_path.is_(None),
+                    (MediaItem.mime_type.like("image/%") | MediaItem.mime_type.like("video/%")),
+                ).all()
+                
+                if not items:
+                    return {"status": "success", "message": "No items need thumbnail generation"}
+                
+                work = [(item.original_path, item.sha256) for item in items]
+                results = generate_thumbnails_batch(work)
+                
+                item_by_sha256 = {item.sha256: item for item in items}
+                updated = 0
+                for tr in results:
+                    item = item_by_sha256.get(tr.sha256)
+                    if item:
+                        db_updated = False
+                        if tr.thumb_rel_path:
+                            item.thumb_path = tr.thumb_rel_path
+                            db_updated = True
+                        if tr.preview_rel_path:
+                            item.preview_path = tr.preview_rel_path
+                            db_updated = True
+                        if not item.phash and tr.phash:
+                            item.phash = tr.phash
+                            db_updated = True
+                        if db_updated:
+                            updated += 1
+                
+                session.commit()
+                log_audit_entry(
+                    "generate_thumbnails",
+                    "success",
+                    f"Inline thumbnail generation complete: {updated}/{len(items)} items"
+                )
+                return {"status": "success", "message": f"Generated thumbnails for {updated}/{len(items)} items", "generated": updated, "total": len(items)}
+        except Exception as inline_exc:
+            logger.error("Inline thumbnail generation also failed: %s", inline_exc)
+            raise HTTPException(500, f"Thumbnail generation failed: {str(inline_exc)}")

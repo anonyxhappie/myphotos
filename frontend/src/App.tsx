@@ -109,6 +109,21 @@ export default function App() {
     };
   }, []);
 
+  const handleLightboxDelete = useCallback(() => {
+    setActiveMediaList((prev) => {
+      const next = prev.filter((item) => item.id !== activeMediaList[selectedMediaIndex!]?.id);
+      if (next.length === 0 || selectedMediaIndex === null) {
+        setSelectedMediaIndex(null);
+        return next;
+      }
+      const newIndex = Math.min(selectedMediaIndex, next.length - 1);
+      setSelectedMediaIndex(newIndex);
+      setNavDirection(0);
+      return next;
+    });
+    void refreshTotalCount();
+  }, [activeMediaList, selectedMediaIndex, refreshTotalCount]);
+
   const handleScanStarted = useCallback((taskId: string, path: string, mode: 'scan' | 'takeout') => {
     setActiveScans((prev) => [...prev, { taskId, path, mode }]);
     setScanProgress((prev) => ({
@@ -396,6 +411,7 @@ export default function App() {
                 }
               : undefined
           }
+          onDelete={handleLightboxDelete}
         />
       )}
 

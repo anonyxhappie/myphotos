@@ -215,6 +215,12 @@ export async function fetchAuditLogs(): Promise<AuditLog[]> {
   return fetchJson<AuditLog[]>(`${BASE}/settings/audit-logs`);
 }
 
+export async function generateMissingThumbnails(): Promise<{ status: string; message: string; generated?: number; total?: number; task_id?: string }> {
+  return fetchJson<{ status: string; message: string; generated?: number; total?: number; task_id?: string }>(`${BASE}/settings/generate-thumbnails`, {
+    method: 'POST',
+  });
+}
+
 export async function toggleFavorite(mediaId: string): Promise<MediaItemSummary> {
   return fetchJson<MediaItemSummary>(`${BASE}/media/${mediaId}/favorite`, { method: 'POST' });
 }

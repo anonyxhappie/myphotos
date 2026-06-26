@@ -8,6 +8,7 @@ import {
   toggleFavorite,
   toggleLock,
   openInFinder,
+  bulkDeleteMedia,
 } from '../api/client';
 
 interface LightboxProps {
@@ -19,6 +20,7 @@ interface LightboxProps {
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+  onDelete?: () => void;
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -77,6 +79,7 @@ export default function Lightbox({
   onClose,
   onPrev,
   onNext,
+  onDelete,
 }: LightboxProps) {
   const [detail, setDetail] = useState<MediaItemDetail | null>(null);
   const [detailError, setDetailError] = useState(false);
@@ -209,6 +212,20 @@ export default function Lightbox({
     }
   };
 
+  const handleDelete = async () => {
+    if (!onDelete) return;
+    if (!confirm('Are you sure you want to permanently delete this item? This will also clean up database records, vectors, and cached thumbnail files.')) {
+      return;
+    }
+    try {
+      await bulkDeleteMedia([mediaId]);
+      onDelete();
+    } catch (error) {
+      console.error('Failed to delete media:', error);
+      alert(error instanceof Error ? error.message : 'Failed to delete media');
+    }
+  };
+
   const handleTouchEnd = (event: React.TouchEvent) => {
     if (touchStartX.current === null) return;
     const distance = event.changedTouches[0].clientX - touchStartX.current;
@@ -287,6 +304,19 @@ export default function Lightbox({
               <path d="M8 10V7a4 4 0 0 1 8 0v3" />
             </svg>
           </button>
+          {onDelete && (
+            <button
+              className="lightbox-icon-button"
+              onClick={handleDelete}
+              aria-label="Delete item"
+              title="Delete"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
+                <path d="M10 11v6M14 11v6" />
+              </svg>
+            </button>
+          )}
           <button
             className={`lightbox-icon-button ${showInfo ? 'is-active' : ''}`}
             onClick={() => setShowInfo((value) => !value)}
