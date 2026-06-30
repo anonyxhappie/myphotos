@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Timeline from '../components/Timeline';
 import type { MediaItemSummary, TagWithCount, ScanStatusResponse } from '../api/types';
 import { fetchTags, triggerTagScan } from '../api/client';
+import { dialog } from '../components/DialogContainer';
 
 interface TagViewPageProps {
   onPhotoClick: (item: MediaItemSummary, list: MediaItemSummary[]) => void;
@@ -62,10 +63,10 @@ export default function TagViewPage({
     try {
       const res = await triggerTagScan(id);
       onScanStarted(res.task_id, `Tag: ${tag.name}`, 'scan');
-      alert(`Re-analysis started for "${tag.name}"`);
+      dialog.alert(`Re-analysis started for "${tag.name}"`);
     } catch (e) {
       console.error(e);
-      alert('Failed to start re-analysis');
+      dialog.alert('Failed to start re-analysis');
     }
   };
 

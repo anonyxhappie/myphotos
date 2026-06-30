@@ -43,6 +43,7 @@ from backend.schemas import (
     BulkDeletePeoplePetsRequest,
     TagCreate,
     TagWithCount,
+    TimelineMetadataResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,19 @@ def _on_startup() -> None:
     settings.setup_rotating_logging()
     Base.metadata.create_all(bind=engine)
     settings.ensure_cache_dirs()
+
+    # Auto-migrate: add trashed_at column if it doesn't exist
+    try:
+        from sqlalchemy import text, inspect as sa_inspect
+        inspector = sa_inspect(engine)
+        existing_cols = {c["name"] for c in inspector.get_columns("media_items")}
+        if "trashed_at" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE media_items ADD COLUMN trashed_at DATETIME"))
+            logger.info("Migrated: added trashed_at column to media_items")
+    except Exception as e:
+        logger.warning("Migration check for trashed_at failed (may already exist): %s", e)
+
     logger.info("MyPhotos API ready — DB at %s", engine.url)
     
     # Clean up stale tasks and orphaned directory scans on startup
@@ -159,9 +173,74 @@ def _on_shutdown() -> None:
 # ║  Timeline Endpoint                                                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
+@app.get("/api/timeline/metadata", response_model=TimelineMetadataResponse)
+def get_timeline_metadata(
+    favorites_only: bool = Query(False),
+    videos_only: bool = Query(False),
+    locked_only: bool = Query(False),
+    dir_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> TimelineMetadataResponse:
+    """Returns aggregated metadata for the timeline map (e.g. counts per year/month)."""
+    from sqlalchemy import func, cast, Integer
+    
+    query = select(MediaItem).where(MediaItem.is_trashed == False)
+
+    if locked_only:
+        query = query.where(MediaItem.is_locked == True)
+    else:
+        query = query.where(MediaItem.is_locked == False)
+
+    if favorites_only:
+        query = query.where(MediaItem.is_favorite == True)
+    
+    if videos_only:
+        query = query.where(MediaItem.mime_type.like("video/%"))
+
+    if dir_id:
+        from backend.db.models import SyncedDirectory
+        import os
+        directory = db.get(SyncedDirectory, dir_id)
+        if directory:
+            path_prefix = directory.path
+            if not path_prefix.endswith(os.sep):
+                path_prefix += os.sep
+            query = query.where(MediaItem.original_path.like(path_prefix + "%"))
+        else:
+            query = query.where(MediaItem.id == "not-found")
+
+    sort_col = func.coalesce(MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at)
+    
+    year_expr = cast(func.strftime('%Y', sort_col), Integer)
+    month_expr = cast(func.strftime('%m', sort_col), Integer)
+    
+    agg_query = (
+        query.with_only_columns(
+            year_expr.label("year"), 
+            month_expr.label("month"), 
+            func.count(MediaItem.id).label("count")
+        )
+        .group_by(year_expr, month_expr)
+        .order_by(year_expr.desc(), month_expr.desc())
+    )
+    
+    rows = db.execute(agg_query).all()
+    
+    total_count = sum(row.count for row in rows)
+    
+    return TimelineMetadataResponse(
+        total_count=total_count,
+        items=[
+            {"year": row.year, "month": row.month, "count": row.count}
+            for row in rows
+            if row.year is not None and row.month is not None
+        ]
+    )
+
 @app.get("/api/timeline", response_model=TimelineResponse)
 def get_timeline(
     cursor: Optional[str] = Query(None, description="ISO datetime cursor from previous page"),
+    direction: str = Query("desc", description="'desc' fetches older, 'asc' fetches newer"),
     limit: int = Query(settings.TIMELINE_PAGE_SIZE, ge=1, le=500),
     favorites_only: bool = Query(False),
     videos_only: bool = Query(False),
@@ -175,7 +254,7 @@ def get_timeline(
     Uses cursor-based pagination (keyset pagination) for stable,
     efficient paging over millions of rows — no OFFSET needed.
     """
-    query = select(MediaItem)
+    query = select(MediaItem).where(MediaItem.is_trashed == False)
 
     # Base filters
     if locked_only:
@@ -215,7 +294,11 @@ def get_timeline(
             MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at
         )
     )
-    query = query.order_by(sort_col.desc(), MediaItem.id.desc())
+    
+    if direction == "asc":
+        query = query.order_by(sort_col.asc(), MediaItem.id.asc())
+    else:
+        query = query.order_by(sort_col.desc(), MediaItem.id.desc())
 
     # Apply cursor filter
     if cursor:
@@ -225,25 +308,38 @@ def get_timeline(
         except ValueError:
             raise HTTPException(400, f"Invalid cursor format: {cursor}")
         
-        query = query.where(
-            (sort_col < cursor_dt)
-            | ((sort_col == cursor_dt) & (MediaItem.id < cursor))
-        )
+        if direction == "asc":
+            query = query.where(
+                (sort_col > cursor_dt)
+                | ((sort_col == cursor_dt) & (MediaItem.id > cursor))
+            )
+        else:
+            query = query.where(
+                (sort_col < cursor_dt)
+                | ((sort_col == cursor_dt) & (MediaItem.id < cursor))
+            )
 
     query = query.limit(limit + 1)  # Fetch one extra to determine if there's a next page
     rows = db.execute(query).scalars().all()
 
     # Determine next cursor
     has_next = len(rows) > limit
-    items = rows[:limit]
+    if has_next:
+        rows = rows[:limit]
+
+    # If we fetched ascending, we reverse the rows so they are still returned
+    # to the frontend in descending order (newest to oldest).
+    if direction == "asc":
+        rows.reverse()
+
     next_cursor = None
-    if has_next and items:
-        last = items[-1]
+    if has_next and rows:
+        last = rows[0] if direction == "asc" else rows[-1]
         val = last.date_taken or last.date_modified or last.ingested_at
         next_cursor = val.isoformat() if val else last.id
 
     # Build volume online lookup
-    volume_ids = {item.volume_id for item in items if item.volume_id}
+    volume_ids = {item.volume_id for item in rows if item.volume_id}
     online_volumes: set[str] = set()
     if volume_ids:
         online_rows = db.execute(
@@ -253,7 +349,7 @@ def get_timeline(
 
     # Map to response models
     summaries = []
-    for item in items:
+    for item in rows:
         is_online = item.volume_id in online_volumes if item.volume_id else True
         summaries.append(
             MediaItemSummary(
@@ -348,9 +444,9 @@ def toggle_lock(media_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/media/delete")
 def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
-    """Bulk delete media items from database, cache files, and LanceDB vectors."""
+    """Soft-delete media items by moving them to the bin (is_trashed=True)."""
     import uuid
-    from backend.db.vector import get_clip_table, get_face_table
+    from datetime import datetime, timezone
     
     if not req.media_ids:
         return {"status": "success", "deleted_count": 0}
@@ -366,10 +462,114 @@ def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
         return {"status": "success", "deleted_count": 0}
 
     items = db.query(MediaItem).filter(MediaItem.id.in_(valid_ids)).all()
-    deleted_count = len(items)
+    trashed_count = len(items)
     
+    now = datetime.now(timezone.utc)
     for item in items:
-        # 1. Delete generated thumbnails/previews
+        item.is_trashed = True
+        item.trashed_at = now
+        
+    db.commit()
+         
+    log_audit_entry("file_trashed", "info", f"Moved {trashed_count} media item(s) to bin")
+    return {"status": "success", "deleted_count": trashed_count}
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  Bin (Trash)                                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+@app.get("/api/bin", response_model=TimelineResponse)
+def list_bin(db: Session = Depends(get_db)) -> TimelineResponse:
+    """List all trashed media items."""
+    query = select(MediaItem).where(MediaItem.is_trashed == True)
+    sort_col = func.coalesce(MediaItem.date_taken, MediaItem.date_modified, MediaItem.ingested_at)
+    query = query.order_by(sort_col.desc())
+    rows = db.execute(query).scalars().all()
+
+    volume_ids = {item.volume_id for item in rows if item.volume_id}
+    online_volumes: set[str] = set()
+    if volume_ids:
+        online_rows = db.execute(
+            select(Volume.id).where(Volume.id.in_(volume_ids), Volume.is_online.is_(True))
+        ).scalars().all()
+        online_volumes = set(online_rows)
+
+    summaries = []
+    for item in rows:
+        is_online = item.volume_id in online_volumes if item.volume_id else True
+        summaries.append(
+            MediaItemSummary(
+                id=item.id,
+                sha256=item.sha256,
+                thumb_path=item.thumb_path,
+                date_taken=item.date_taken,
+                date_modified=item.date_modified,
+                width=item.width,
+                height=item.height,
+                mime_type=item.mime_type,
+                is_favorite=item.is_favorite,
+                is_locked=item.is_locked,
+                is_online=is_online,
+            )
+        )
+
+    total_size = sum(item.file_size_bytes or 0 for item in rows)
+    return TimelineResponse(
+        items=summaries,
+        next_cursor=None,
+        total_count=len(summaries),
+        total_size_bytes=total_size,
+    )
+
+
+@app.post("/api/bin/restore")
+def restore_from_bin(req: BulkDeleteRequest, db: Session = Depends(get_db)):
+    """Restore trashed media items from the bin."""
+    import uuid
+
+    if not req.media_ids:
+        return {"status": "success", "restored_count": 0}
+
+    valid_ids = []
+    for mid in req.media_ids:
+        try:
+            valid_ids.append(str(uuid.UUID(mid)))
+        except ValueError:
+            pass
+
+    if not valid_ids:
+        return {"status": "success", "restored_count": 0}
+
+    items = db.query(MediaItem).filter(
+        MediaItem.id.in_(valid_ids),
+        MediaItem.is_trashed == True,
+    ).all()
+    restored_count = len(items)
+
+    for item in items:
+        item.is_trashed = False
+        item.trashed_at = None
+
+    db.commit()
+    log_audit_entry("file_restored", "info", f"Restored {restored_count} media item(s) from bin")
+    return {"status": "success", "restored_count": restored_count}
+
+
+@app.post("/api/bin/empty")
+def empty_bin(db: Session = Depends(get_db)):
+    """Permanently delete all trashed media items."""
+    from backend.db.vector import get_clip_table, get_face_table
+
+    items = db.query(MediaItem).filter(MediaItem.is_trashed == True).all()
+    if not items:
+        return {"status": "success", "deleted_count": 0}
+
+    valid_ids = [item.id for item in items]
+    deleted_count = len(items)
+
+    for item in items:
+        # Delete generated thumbnails/previews
         if item.thumb_path:
             try:
                 (settings.CACHE_DIR / item.thumb_path).unlink(missing_ok=True)
@@ -380,8 +580,8 @@ def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
                 (settings.CACHE_DIR / item.preview_path).unlink(missing_ok=True)
             except Exception:
                 pass
-        
-        # 2. Delete original file on disk
+
+        # Delete original file on disk
         if item.original_path:
             try:
                 original_file = Path(item.original_path)
@@ -389,28 +589,25 @@ def bulk_delete_media(req: BulkDeleteRequest, db: Session = Depends(get_db)):
                     original_file.unlink()
             except Exception as e:
                 logger.warning("Failed to delete original file %s: %s", item.original_path, e)
-        
-        # 3. Delete database record
+
         db.delete(item)
-        
-    # Commit SQLite deletion
+
     db.commit()
-    
-    # 3. Delete from LanceDB vector index
+
+    # Delete from LanceDB vector index
     try:
         clip_table = get_clip_table()
-        # LanceDB SQL filter syntax
-        clip_table.delete(f"media_id in {tuple(valid_ids) if len(valid_ids) > 1 else f'(\"{valid_ids[0]}\")'}")
+        clip_table.delete(f"media_id in {tuple(valid_ids) if len(valid_ids) > 1 else f'(\"{valid_ids[0]}\")'}") 
     except Exception as e:
-         logger.warning("Failed to delete from clip vector table: %s", e)
-         
+        logger.warning("Failed to delete from clip vector table: %s", e)
+
     try:
         face_table = get_face_table()
-        face_table.delete(f"media_id in {tuple(valid_ids) if len(valid_ids) > 1 else f'(\"{valid_ids[0]}\")'}")
+        face_table.delete(f"media_id in {tuple(valid_ids) if len(valid_ids) > 1 else f'(\"{valid_ids[0]}\")'}") 
     except Exception as e:
-         logger.warning("Failed to delete from face vector table: %s", e)
-         
-    log_audit_entry("file_deleted", "warning", f"Bulk deleted {deleted_count} media item(s)")
+        logger.warning("Failed to delete from face vector table: %s", e)
+
+    log_audit_entry("bin_emptied", "warning", f"Permanently deleted {deleted_count} media item(s) from bin")
     return {"status": "success", "deleted_count": deleted_count}
 
 
@@ -696,9 +893,10 @@ def _requeue_scan(task_id: str, *, retry: bool) -> ScanStatusResponse:
     if state.get("status") not in allowed_statuses:
         action = "retry" if retry else "resume"
         raise HTTPException(409, f"Cannot {action} a {state.get('status')} scan")
-
     path = state.get("path")
-    if not path or not Path(path).is_dir():
+    if path in ("AI Media Analysis", "Face Detection"):
+        pass # Skip directory check for ML tasks
+    elif not path or not Path(path).is_dir():
         raise HTTPException(400, f"Scan directory is unavailable: {path}")
 
     progress = state.get("progress") or {}
@@ -726,14 +924,22 @@ def _requeue_scan(task_id: str, *, retry: bool) -> ScanStatusResponse:
         }),
     )
 
-    task = task_parse_takeout if mode == "takeout" else task_scan_directory
-    task.delay(
-        path,
-        generate_thumbs,
-        task_id=task_id,
-        resume_after=resume_after,
-        initial_progress=initial_progress,
-    )
+    if task_id == "ml-pipeline":
+        from backend.tasks import task_process_ml_pipeline
+        task_process_ml_pipeline.delay()
+    elif task_id == "face-scan":
+        from backend.tasks import task_scan_faces
+        task_scan_faces.delay(task_id="face-scan")
+    else:
+        task = task_parse_takeout if mode == "takeout" else task_scan_directory
+        task.delay(
+            path,
+            generate_thumbs,
+            task_id=task_id,
+            resume_after=resume_after,
+            initial_progress=initial_progress,
+        )
+
     return ScanStatusResponse.model_validate(updated)
 
 
@@ -813,20 +1019,80 @@ def start_ml_pipeline() -> ScanEnqueuedResponse:
 
 @app.post("/api/ml/retrain", response_model=ScanEnqueuedResponse)
 def retrain_ml(db: Session = Depends(get_db)):
-    """Reset ML flags and re-run ML pipeline for all items."""
+    """Reset ML flags and re-run ML pipeline for all items. Also clears out old ML data."""
     from backend.tasks import task_process_ml_pipeline
-    from backend.db.models import MediaItem, AuditLog
+    from backend.db.models import MediaItem, AuditLog, Face, Person, media_tags, Tag
+    from backend.services.ml import get_face_table, get_clip_table
+    import lancedb
     
+    # 1. Clear out SQL tables
+    db.query(Face).delete()
+    db.query(Person).delete()
+    
+    # 2. Remove AI generated tags
+    ml_tags = db.query(Tag).filter(Tag.source.in_(["ai_clip", "ai_deepface", "ai_ocr"])).all()
+    ml_tag_ids = [t.id for t in ml_tags]
+    if ml_tag_ids:
+        db.execute(media_tags.delete().where(media_tags.c.tag_id.in_(ml_tag_ids)))
+        db.query(Tag).filter(Tag.id.in_(ml_tag_ids)).delete(synchronize_session=False)
+        
     db.query(MediaItem).update({"faces_scanned": False, "clip_embedded": False})
+    
+    # 3. Clear LanceDB tables
+    try:
+        get_face_table().delete("1=1")
+    except Exception:
+        pass
+    try:
+        get_clip_table().delete("1=1")
+    except Exception:
+        pass
+        
     db.add(AuditLog(
         action="retrain_ml",
         level="warning",
-        details="Triggered AI retraining for all media items."
+        details="Triggered AI retraining for all media items. Cleared old ML data."
     ))
     db.commit()
     
     result = task_process_ml_pipeline.delay()
     return ScanEnqueuedResponse(task_id=result.id, message="ML retraining started")
+
+@app.post("/api/ml/retrain_faces", response_model=ScanEnqueuedResponse)
+def retrain_faces(db: Session = Depends(get_db)):
+    """Reset only face flags and re-run ML pipeline. Clears out old face data."""
+    from backend.tasks import task_process_ml_pipeline
+    from backend.db.models import MediaItem, AuditLog, Face, Person, media_tags, Tag
+    from backend.services.ml import get_face_table
+    
+    # 1. Clear out SQL tables
+    db.query(Face).delete()
+    db.query(Person).delete()
+    
+    # 2. Remove Deepface tags
+    deepface_tags = db.query(Tag).filter(Tag.source == "ai_deepface").all()
+    if deepface_tags:
+        df_tag_ids = [t.id for t in deepface_tags]
+        db.execute(media_tags.delete().where(media_tags.c.tag_id.in_(df_tag_ids)))
+        db.query(Tag).filter(Tag.id.in_(df_tag_ids)).delete(synchronize_session=False)
+    
+    db.query(MediaItem).update({"faces_scanned": False})
+    
+    # 3. Clear LanceDB table
+    try:
+        get_face_table().delete("1=1")
+    except Exception:
+        pass
+        
+    db.add(AuditLog(
+        action="retrain_faces",
+        level="info",
+        details="Triggered Face Retraining for all media items. Cleared old face data."
+    ))
+    db.commit()
+    
+    result = task_process_ml_pipeline.delay()
+    return ScanEnqueuedResponse(task_id=result.id, message="Face retraining started")
 
 @app.get("/api/search", response_model=TimelineResponse)
 def search_media(q: str = Query(..., description="Search query"), db: Session = Depends(get_db)) -> TimelineResponse:
@@ -851,7 +1117,7 @@ def search_media(q: str = Query(..., description="Search query"), db: Session = 
         return TimelineResponse(items=[], next_cursor=None, total_count=0, total_size_bytes=0)
         
     # Fetch metadata for those IDs
-    query = select(MediaItem).where(MediaItem.id.in_(all_media_ids))
+    query = select(MediaItem).where(MediaItem.id.in_(all_media_ids), MediaItem.is_trashed == False)
     rows = db.execute(query).scalars().all()
     
     # Sort them: first the semantic results in order, then any SQL-only matches
@@ -1478,7 +1744,12 @@ def get_people(db: Session = Depends(get_db)):
     
     responses = []
     for p in people:
-        count = db.execute(select(func.count(Face.id)).where(Face.person_id == p.id)).scalar() or 0
+        count = db.execute(
+            select(func.count(func.distinct(MediaItem.id)))
+            .join(Face, Face.media_item_id == MediaItem.id)
+            .where(Face.person_id == p.id)
+            .where(MediaItem.is_archived == False)
+        ).scalar() or 0
         cover_media_id = None
         if p.cover_face_id:
             cover_face = db.get(Face, p.cover_face_id)
@@ -1535,6 +1806,8 @@ def get_person_media(person_id: str, db: Session = Depends(get_db)):
         select(MediaItem)
         .join(Face, Face.media_item_id == MediaItem.id)
         .where(Face.person_id == person_id)
+        .where(MediaItem.is_archived == False)
+        .group_by(MediaItem.id)
         .order_by(sort_col.desc(), MediaItem.id.desc())
     ).scalars().all()
     

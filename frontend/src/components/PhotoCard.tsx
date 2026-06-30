@@ -84,7 +84,7 @@ export default function PhotoCard({ item, selectionMode, isSelected, onSelectTog
 
       {/* Selection Checkmark */}
       <div 
-        className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-full border-2 transition-all flex items-center justify-center cursor-pointer
+        className={`checkmark-bubble absolute top-2 left-2 z-10 w-6 h-6 rounded-full border-2 transition-all flex items-center justify-center cursor-pointer
           ${isSelected ? 'bg-[var(--color-accent)] border-[var(--color-accent)]' : 'border-white/50 bg-black/20 opacity-0 group-hover:opacity-100 hover:border-white'}`}
         onClick={(e) => {
           e.stopPropagation();
@@ -99,7 +99,7 @@ export default function PhotoCard({ item, selectionMode, isSelected, onSelectTog
       </div>
 
       {/* Badges */}
-      <div className="absolute top-1.5 right-1.5 flex gap-1">
+      <div className="badges-container absolute top-1.5 right-1.5 flex gap-1">
         {item.is_favorite && (
           <span className="badge-favorite text-[var(--color-danger)] bg-black/50 p-1 rounded-full" title="Favorite">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">

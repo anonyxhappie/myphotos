@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchAlbums, createAlbum, getThumbUrl } from '../api/client';
 import type { Album } from '../api/types';
+import { dialog } from './DialogContainer';
 
 export default function Albums() {
   const navigate = useNavigate();
@@ -47,7 +48,7 @@ export default function Albums() {
       loadAlbums();
     } catch (e) {
       console.error(e);
-      alert('Failed to create album');
+      dialog.alert('Failed to create album');
     }
   };
 

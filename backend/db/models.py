@@ -158,6 +158,7 @@ class MediaItem(Base):
     is_favorite: bool = Column(Boolean, default=False, nullable=False)
     is_archived: bool = Column(Boolean, default=False, nullable=False)
     is_trashed: bool = Column(Boolean, default=False, nullable=False)
+    trashed_at: datetime = Column(DateTime(timezone=True), nullable=True, comment="Timestamp when the item was moved to the bin")
     is_locked: bool = Column(Boolean, default=False, nullable=False)
 
     # -- AI processing status ----------------------------------------------

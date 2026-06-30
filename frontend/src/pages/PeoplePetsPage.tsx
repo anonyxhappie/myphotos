@@ -3,6 +3,7 @@ import { fetchPeople, fetchPets, triggerClusterFaces, bulkDeletePeoplePets } fro
 import type { PersonResponse } from '../api/people';
 import { getThumbUrl } from '../api/client';
 import type { TimelineResponse } from '../api/types';
+import { dialog } from '../components/DialogContainer';
 
 interface PeoplePetsPageProps {
   onPersonClick: (person: PersonResponse) => void;
@@ -43,8 +44,15 @@ export default function PeoplePetsPage({ onPersonClick, onPetsClick, isAnalyzing
   const handleCluster = async () => {
     setClustering(true);
     try {
-      await triggerClusterFaces();
-      await loadData();
+      const response = await triggerClusterFaces();
+      if (response.status === "no_faces") {
+        await dialog.alert("No faces found! Please go to Settings and click 'Re-scan Faces' first.");
+      } else if (response.people_created === 0) {
+        await dialog.alert("No new people groups were found. Wait for the Face Scan to find more faces and try again!");
+      } else {
+        await dialog.alert(`Successfully found ${response.people_created} new people groups!`);
+        await loadData();
+      }
     } catch (e) {
       console.error("Failed to cluster faces", e);
     } finally {
@@ -80,7 +88,7 @@ export default function PeoplePetsPage({ onPersonClick, onPetsClick, isAnalyzing
       message = `Are you sure you want to delete the pets category?`;
     }
 
-    if (!confirm(message)) return;
+    if (!(await dialog.confirm(message))) return;
 
     try {
       await bulkDeletePeoplePets(Array.from(selectedPeopleIds), hasPets);
@@ -89,7 +97,7 @@ export default function PeoplePetsPage({ onPersonClick, onPetsClick, isAnalyzing
       await loadData();
     } catch (e) {
       console.error(e);
-      alert('Failed to delete selected items');
+      dialog.alert('Failed to delete selected items');
     }
   };
 
@@ -155,7 +163,13 @@ export default function PeoplePetsPage({ onPersonClick, onPetsClick, isAnalyzing
                     <div className={`w-full h-full rounded-full overflow-hidden transition-all ${
                       selectedPeopleIds.has(person.id) ? 'ring-4 ring-[var(--color-accent)] ring-offset-2 ring-offset-[var(--color-bg-primary)]' : ''
                     }`}>
-                      {person.cover_media_id ? (
+                      {person.cover_face_id ? (
+                        <img 
+                          src={`/api/faces/${person.cover_face_id}/crop`}
+                          alt={person.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : person.cover_media_id ? (
                         <img 
                           src={getThumbUrl(person.cover_media_id)} 
                           alt={person.name}

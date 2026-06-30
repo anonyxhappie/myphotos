@@ -78,6 +78,17 @@ export interface TimelineResponse {
   total_size_bytes: number;
 }
 
+export interface TimelineMetadataItem {
+  year: number;
+  month: number;
+  count: number;
+}
+
+export interface TimelineMetadataResponse {
+  total_count: number;
+  items: TimelineMetadataItem[];
+}
+
 export interface VolumeResponse {
   id: string;
   os_uuid: string;

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchTags, createTag, deleteTag, triggerTagScan } from '../api/client';
+import { dialog } from '../components/DialogContainer';
 import type { TagWithCount, ScanStatusResponse } from '../api/types';
 
 interface TagsPageProps {
@@ -57,19 +58,19 @@ export default function TagsPage({ scanProgress, onScanStarted }: TagsPageProps)
       await loadTags();
     } catch (e) {
       console.error(e);
-      alert('Failed to create tag');
+      dialog.alert('Failed to create tag');
     }
   };
 
   const handleDelete = async (tagId: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Are you sure you want to delete the tag "${name}"?`)) return;
+    if (!(await dialog.confirm(`Are you sure you want to delete the tag "${name}"?`))) return;
     try {
       await deleteTag(tagId);
       await loadTags();
     } catch (e) {
       console.error(e);
-      alert('Failed to delete tag');
+      dialog.alert('Failed to delete tag');
     }
   };
 
@@ -78,10 +79,10 @@ export default function TagsPage({ scanProgress, onScanStarted }: TagsPageProps)
     try {
       const res = await triggerTagScan(tagId);
       onScanStarted(res.task_id, `Tag: ${name}`, 'scan');
-      alert(`Re-analysis started for "${name}"`);
+      dialog.alert(`Re-analysis started for "${name}"`);
     } catch (e) {
       console.error(e);
-      alert('Failed to start re-analysis');
+      dialog.alert('Failed to start re-analysis');
     }
   };
 

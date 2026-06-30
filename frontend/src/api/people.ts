@@ -4,6 +4,7 @@ export interface PersonResponse {
   id: string;
   name: string;
   cover_media_id: string | null;
+  cover_face_id: string | null;
   face_count: number;
 }
 

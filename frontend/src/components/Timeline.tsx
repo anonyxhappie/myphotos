@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import type { MediaItemSummary } from '../api/types';
-import { fetchTimeline, searchPhotos, bulkDeleteMedia, fetchAlbumMedia, fetchTagMedia } from '../api/client';
+import type { MediaItemSummary, TimelineMetadataResponse } from '../api/types';
+import { fetchTimeline, searchPhotos, bulkDeleteMedia, fetchAlbumMedia, fetchTagMedia, fetchTimelineMetadata, fetchBin, emptyBin } from '../api/client';
 import PhotoCard from './PhotoCard';
 import AddToAlbumModal from './AddToAlbumModal';
 
@@ -16,6 +16,7 @@ interface TimelineProps {
   dirId?: string;
   personId?: string;
   petsOnly?: boolean;
+  isBin?: boolean;
   sort?: string;
   refreshToken?: number;
   hideHeader?: boolean;
@@ -89,6 +90,7 @@ function buildJustifiedRows(
   containerWidth: number,
   targetHeight: number,
   gap: number,
+  zoomLevel: number = 4,
 ): JustifiedRow[] {
   if (!containerWidth || items.length === 0) return [];
 
@@ -113,13 +115,15 @@ function buildJustifiedRows(
     aspectSum = 0;
   };
 
+  const maxItemsPerRow = zoomLevel === 1 ? 18 : zoomLevel === 2 ? 12 : zoomLevel === 3 ? 8 : 6;
+
   items.forEach((item) => {
     pending.push(item);
     aspectSum += getAspectRatio(item);
     const availableWidth = containerWidth - gap * (pending.length - 1);
     const projectedHeight = availableWidth / aspectSum;
 
-    if (projectedHeight <= targetHeight * 1.18 || pending.length >= 6) {
+    if (projectedHeight <= targetHeight * 1.18 || pending.length >= maxItemsPerRow) {
       commitRow(false);
     }
   });
@@ -132,6 +136,7 @@ interface JustifiedPhotoGridProps {
   items: MediaItemSummary[];
   allItems: MediaItemSummary[];
   selectedIds: Set<string>;
+  zoomLevel: number;
   onSelectToggle: (item: MediaItemSummary, event?: React.MouseEvent) => void;
   onPhotoClick: (item: MediaItemSummary, list: MediaItemSummary[]) => void;
 }
@@ -140,6 +145,7 @@ function JustifiedPhotoGrid({
   items,
   allItems,
   selectedIds,
+  zoomLevel,
   onSelectToggle,
   onPhotoClick,
 }: JustifiedPhotoGridProps) {
@@ -157,11 +163,13 @@ function JustifiedPhotoGrid({
     return () => observer.disconnect();
   }, []);
 
-  const targetHeight = containerWidth < 640 ? 112 : containerWidth < 960 ? 150 : 184;
-  const gap = containerWidth < 640 ? 2 : 4;
+  const baseHeight = containerWidth < 640 ? 112 : containerWidth < 960 ? 150 : 184;
+  const scale = zoomLevel === 3 ? 0.75 : zoomLevel === 2 ? 0.55 : zoomLevel === 1 ? 0.38 : 1.0;
+  const targetHeight = baseHeight * scale;
+  const gap = (containerWidth < 640 ? 2 : 4) * (zoomLevel === 1 ? 0.5 : 1);
   const rows = useMemo(
-    () => buildJustifiedRows(items, containerWidth, targetHeight, gap),
-    [containerWidth, gap, items, targetHeight],
+    () => buildJustifiedRows(items, containerWidth, targetHeight, gap, zoomLevel),
+    [containerWidth, gap, items, targetHeight, zoomLevel],
   );
 
   const renderCard = (item: MediaItemSummary) => (
@@ -224,6 +232,7 @@ export default function Timeline({
   dirId,
   personId,
   petsOnly = false,
+  isBin = false,
   sort = "date_taken",
   refreshToken = 0,
   hideHeader = false,
@@ -242,6 +251,43 @@ export default function Timeline({
   const [showAddToAlbum, setShowAddToAlbum] = useState(false);
   const initialLoadDone = useRef(false);
   const lastRefreshToken = useRef(0);
+  const virtuosoRef = useRef<any>(null);
+  const scrubberContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [scrollPercent, setScrollPercent] = useState(0);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [zoomLevel, setZoomLevel] = useState<number>(() => {
+    const saved = localStorage.getItem('timeline_zoom');
+    if (saved) {
+      const val = parseInt(saved, 10);
+      if (val >= 1 && val <= 4) return val;
+    }
+    return 4; // Default to max zoom in
+  });
+
+  const changeZoom = useCallback((level: number) => {
+    setZoomLevel(level);
+    localStorage.setItem('timeline_zoom', String(level));
+  }, []);
+
+  const loadMoreTimeoutRef = useRef<number | null>(null);
+  const lastFetchTimeRef = useRef(0);
+  
+  const [timelineMetadata, setTimelineMetadata] = useState<TimelineMetadataResponse | null>(null);
+
+  useEffect(() => {
+    if (searchQuery.trim() || albumId || tagId || isBin || personId || petsOnly) return;
+    fetchTimelineMetadata({
+      favorites_only: favoritesOnly,
+      videos_only: videosOnly,
+      locked_only: lockedOnly,
+      dir_id: dirId,
+      sort,
+    })
+      .then(res => setTimelineMetadata(res))
+      .catch(err => console.error('Failed to fetch timeline metadata', err));
+  }, [searchQuery, albumId, tagId, isBin, personId, petsOnly, favoritesOnly, videosOnly, lockedOnly, dirId, sort]);
 
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
 
@@ -280,8 +326,54 @@ export default function Timeline({
 
   const dayGroups = useMemo(() => buildDayGroups(items, grouping), [items, grouping]);
 
-  const loadMore = useCallback(async () => {
-    if (isLoading || !hasMore) return;
+  const scrubberMarkers = useMemo(() => {
+    if (timelineMetadata && timelineMetadata.total_count > 0) {
+      const markers: { label: string; index: number; percent: number; isYear: boolean; dateStr: string }[] = [];
+      let cumulative = 0;
+      let lastYear = 0;
+      
+      for (let i = 0; i < timelineMetadata.items.length; i++) {
+        const item = timelineMetadata.items[i];
+        const percent = cumulative / timelineMetadata.total_count;
+        if (item.year !== lastYear) {
+          markers.push({ label: String(item.year), index: i, percent, isYear: true, dateStr: `${item.year}` });
+          lastYear = item.year;
+        } else {
+          markers.push({ label: '•', index: i, percent, isYear: false, dateStr: `${item.year}-${item.month}` });
+        }
+        cumulative += item.count;
+      }
+      return markers;
+    }
+    
+    const markers: { label: string; index: number; percent: number; isYear: boolean; dateStr: string }[] = [];
+    let lastYear = '';
+    let lastMonth = '';
+    
+    dayGroups.forEach((group, index) => {
+      const yearMatch = group.dateStr.match(/\b(20\d{2}|19\d{2})\b/);
+      const year = yearMatch ? yearMatch[1] : '';
+      const percent = dayGroups.length > 1 ? index / (dayGroups.length - 1) : 0;
+      
+      if (year && year !== lastYear) {
+        markers.push({ label: year, index, percent, isYear: true, dateStr: group.dateStr });
+        lastYear = year;
+        lastMonth = '';
+      } else {
+        const monthMatch = group.dateStr.match(/^[a-zA-Z]{3,}/);
+        const month = monthMatch ? monthMatch[0] : '';
+        if (month && month !== lastMonth) {
+          markers.push({ label: '•', index, percent, isYear: false, dateStr: group.dateStr });
+          lastMonth = month;
+        }
+      }
+    });
+    return markers;
+  }, [dayGroups, grouping, timelineMetadata]);
+
+
+  const loadMore = useCallback(async (overrideCursor?: string, replace = false) => {
+    if (isLoading || (!hasMore && !overrideCursor)) return;
     setIsLoading(true);
 
     try {
@@ -294,6 +386,9 @@ export default function Timeline({
         // Use pets endpoint
         const response = await fetch(`/api/pets`);
         res = await response.json();
+      } else if (isBin) {
+        res = await fetchBin();
+        setHasMore(false);
       } else if (searchQuery) {
         res = await searchPhotos(searchQuery);
         setHasMore(false);
@@ -305,7 +400,7 @@ export default function Timeline({
         setHasMore(false);
       } else {
         res = await fetchTimeline({
-          cursor: nextCursor || undefined,
+          cursor: overrideCursor !== undefined ? (overrideCursor || undefined) : (nextCursor || undefined),
           limit: 100,
           favorites_only: favoritesOnly,
           videos_only: videosOnly,
@@ -323,12 +418,17 @@ export default function Timeline({
       setResultCount(res.total_count);
       setResultSize(res.total_size_bytes || 0);
 
-      setItems((prev) => {
-        const newItems = res.items || [];
-        const appendedItems = (searchQuery || personId || petsOnly || albumId || tagId) ? newItems : [...prev, ...newItems];
-        // Deduplicate by ID
-        return Array.from(new Map(appendedItems.map((item: MediaItemSummary) => [item.id, item])).values()) as MediaItemSummary[];
-      });
+      const newItems = res.items || [];
+      if (overrideCursor !== undefined && replace) {
+        setItems(newItems);
+      } else {
+        setItems((prev) => {
+          const appendedItems = (searchQuery || personId || petsOnly || albumId || tagId || isBin) ? newItems : [...prev, ...newItems];
+          // Deduplicate by ID
+          return Array.from(new Map(appendedItems.map((item: MediaItemSummary) => [item.id, item])).values()) as MediaItemSummary[];
+        });
+      }
+
 
     } catch (err) {
       console.error('Failed to fetch timeline:', err);
@@ -349,7 +449,141 @@ export default function Timeline({
     searchQuery,
     sort,
     videosOnly,
+    personId,
+    petsOnly,
+    isBin
   ]);
+
+  const scrubToY = useCallback((y: number) => {
+    if (timelineMetadata && timelineMetadata.total_count > 0 && scrubberContainerRef.current) {
+      const { top, height } = scrubberContainerRef.current.getBoundingClientRect();
+      const percent = Math.min(1, Math.max(0, (y - top) / height));
+      setScrollPercent(percent); // immediate visual feedback
+      const targetGlobalIndex = Math.floor(percent * timelineMetadata.total_count);
+      
+      let cumulative = 0;
+      let targetItem = timelineMetadata.items[0];
+      for (const item of timelineMetadata.items) {
+        cumulative += item.count;
+        if (cumulative >= targetGlobalIndex) {
+          targetItem = item;
+          break;
+        }
+      }
+      
+      if (targetItem) {
+        const nextMonth = targetItem.month === 12 ? 1 : targetItem.month + 1;
+        const nextYear = targetItem.month === 12 ? targetItem.year + 1 : targetItem.year;
+        const targetCursor = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00Z`;
+        
+        const now = Date.now();
+        if (now - lastFetchTimeRef.current > 150) {
+          lastFetchTimeRef.current = now;
+          if (loadMoreTimeoutRef.current) window.clearTimeout(loadMoreTimeoutRef.current);
+          loadMore(targetCursor, true);
+        } else {
+          if (loadMoreTimeoutRef.current) window.clearTimeout(loadMoreTimeoutRef.current);
+          loadMoreTimeoutRef.current = window.setTimeout(() => {
+            lastFetchTimeRef.current = Date.now();
+            loadMore(targetCursor, true);
+          }, 150);
+        }
+      }
+    } else {
+      if (!virtuosoRef.current || dayGroups.length === 0 || !scrubberContainerRef.current) return;
+      const { top, height } = scrubberContainerRef.current.getBoundingClientRect();
+      const relativeY = Math.max(0, Math.min(y - top, height));
+      const targetIndex = Math.floor((relativeY / height) * (dayGroups.length - 1));
+      virtuosoRef.current.scrollToIndex({ index: Math.max(0, targetIndex), align: 'start' });
+    }
+  }, [dayGroups.length, timelineMetadata, loadMore]);
+
+  const handleScrubberPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const container = scrubberContainerRef.current;
+    if (container) {
+      container.setPointerCapture(e.pointerId);
+    }
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    scrubToY(e.clientY);
+  }, [scrubToY]);
+
+  const handlePointerMove = useCallback((e: PointerEvent) => {
+    if (isDraggingRef.current) {
+      e.preventDefault();
+      scrubToY(e.clientY);
+    }
+  }, [scrubToY]);
+
+  const handlePointerUp = useCallback((e: PointerEvent) => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      const container = scrubberContainerRef.current;
+      if (container && container.hasPointerCapture(e.pointerId)) {
+        container.releasePointerCapture(e.pointerId);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [handlePointerMove, handlePointerUp]);
+
+  const loadedChunkGlobalOffset = useMemo(() => {
+    if (!timelineMetadata || items.length === 0) return 0;
+    const firstItem = items[0];
+    const date = new Date(firstItem.date_taken || firstItem.date_modified || Date.now());
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+
+    let cumulative = 0;
+    for (const metaItem of timelineMetadata.items) {
+      if (sort === 'date_taken_asc' || sort === 'date_asc' || sort === 'name_asc') {
+        if (metaItem.year < year || (metaItem.year === year && metaItem.month < month)) {
+          cumulative += metaItem.count;
+        } else break;
+      } else {
+        if (metaItem.year > year || (metaItem.year === year && metaItem.month > month)) {
+          cumulative += metaItem.count;
+        } else break;
+      }
+    }
+    return cumulative;
+  }, [items, timelineMetadata, sort]);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
+    if (isDraggingRef.current || !timelineMetadata || timelineMetadata.total_count === 0) return;
+    
+    const scrollTop = e.currentTarget.scrollTop;
+    const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 1000;
+    const zoomScale = zoomLevel === 3 ? 0.75 : zoomLevel === 2 ? 0.55 : zoomLevel === 1 ? 0.38 : 1.0;
+    const rowHeight = ((windowWidth < 640 ? 112 : windowWidth < 960 ? 150 : 184) + (windowWidth < 640 ? 2 : 4)) * zoomScale;
+    const effectiveRowHeight = rowHeight + 10; 
+    const scrolledRows = scrollTop / effectiveRowHeight;
+    const itemsPerRow = windowWidth / (rowHeight * 1.5);
+    const scrolledItemsLocal = Math.floor(scrolledRows * itemsPerRow);
+    
+    const currentGlobalIndex = loadedChunkGlobalOffset + scrolledItemsLocal;
+    const percent = Math.min(1, Math.max(0, currentGlobalIndex / timelineMetadata.total_count));
+    
+    setScrollPercent(percent);
+  }, [loadedChunkGlobalOffset, timelineMetadata, zoomLevel]);
+
+  const toggleGroupCollapse = useCallback((dateStr: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(dateStr)) next.delete(dateStr);
+      else next.add(dateStr);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (initialLoadDone.current) return;
@@ -406,8 +640,10 @@ export default function Timeline({
   const handleDeleteSelected = async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
-    if (!confirm(`Are you sure you want to permanently delete these ${ids.length} item(s)? This will also clean up database records, vectors, and cached thumbnail files.`)) {
-      return;
+    if (isBin) {
+      if (!confirm(`Are you sure you want to permanently delete these ${ids.length} item(s)? This will also clean up database records, vectors, and cached thumbnail files.`)) {
+        return;
+      }
     }
     try {
       await bulkDeleteMedia(ids);
@@ -421,7 +657,7 @@ export default function Timeline({
   };
 
   return (
-    <div className="timeline-view">
+    <div className="timeline-view" data-zoom={zoomLevel}>
       {!hideHeader && (
         <div className="timeline-toolbar">
           <div className="timeline-heading">
@@ -430,7 +666,7 @@ export default function Timeline({
               <span>
                 {resultCount.toLocaleString()} {resultCount === 1 ? 'item' : 'items'}
               </span>
-              {dirId && resultCount > 0 && (
+              {dirId && resultCount > 0 && !isBin && (
                 <button 
                   onClick={() => {
                     setSelectedIds(new Set()); // ensure no selected ids when passing dirId
@@ -441,21 +677,66 @@ export default function Timeline({
                   Add all to Album
                 </button>
               )}
+              {isBin && resultCount > 0 && (
+                <button 
+                  onClick={async () => {
+                    if (!confirm('Empty bin permanently?')) return;
+                    try { await emptyBin(); setItems([]); onTotalCountChange(0, 0); } catch (e) { console.error(e); }
+                  }}
+                  className="bg-[var(--color-danger)]/10 text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white px-3 py-1 rounded-md text-sm font-medium transition-colors border border-[var(--color-danger)]/20"
+                >
+                  Empty Bin
+                </button>
+              )}
             </div>
           </div>
 
           {items.length > 0 && (
-            <div className="grouping-control" aria-label="Group photos by date range">
-            {(['day', 'week', 'month', 'year'] as GroupingMode[]).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setGrouping(mode)}
-                className={grouping === mode ? 'is-active' : ''}
-                aria-pressed={grouping === mode}
-              >
-                {mode}
-              </button>
-            ))}
+            <div className="flex items-center gap-3">
+              {/* Zoom Control */}
+              <div className="zoom-control" aria-label="Zoom photos">
+                <button
+                  onClick={() => changeZoom(Math.max(1, zoomLevel - 1))}
+                  disabled={zoomLevel === 1}
+                  title="Zoom out"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+                <div className="zoom-indicator">
+                  {[1, 2, 3, 4].map((level) => (
+                    <span 
+                      key={level} 
+                      className={`zoom-dot ${zoomLevel === level ? 'is-active' : ''}`}
+                    />
+                  ))}
+                </div>
+                <button
+                  onClick={() => changeZoom(Math.min(4, zoomLevel + 1))}
+                  disabled={zoomLevel === 4}
+                  title="Zoom in"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Grouping Control */}
+              <div className="grouping-control" aria-label="Group photos by date range">
+                {(['day', 'week', 'month', 'year'] as GroupingMode[]).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setGrouping(mode)}
+                    className={grouping === mode ? 'is-active' : ''}
+                    aria-pressed={grouping === mode}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -472,22 +753,47 @@ export default function Timeline({
         </div>
       ) : (
         <Virtuoso
+          ref={virtuosoRef}
           className="timeline-scroller"
           data={dayGroups}
           overscan={600}
+          onScroll={handleScroll}
           itemContent={(_, group) => {
+            const isCollapsed = collapsedGroups.has(group.dateStr);
             return (
-              <section className="timeline-date-group">
-                <div className="timeline-date-label">
-                  {group.dateStr}
-                </div>
-                <JustifiedPhotoGrid
-                  items={group.items}
-                  allItems={items}
-                  selectedIds={selectedIds}
-                  onSelectToggle={handleSelectToggle}
-                  onPhotoClick={onPhotoClick}
-                />
+              <section className={`timeline-date-group ${isCollapsed ? 'is-collapsed' : ''}`}>
+                <button 
+                  className="timeline-date-label"
+                  onClick={() => toggleGroupCollapse(group.dateStr)}
+                  aria-expanded={!isCollapsed}
+                >
+                  <span className="date-label-text">{group.dateStr}</span>
+                  <span className="date-label-count">{group.items.length}</span>
+                  <svg 
+                    className={`collapse-chevron ${isCollapsed ? 'is-collapsed' : ''}`}
+                    width="16" 
+                    height="16" 
+                    viewBox="0 0 24 24" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                    style={{ marginLeft: 'auto' }}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                {!isCollapsed && (
+                  <JustifiedPhotoGrid
+                    items={group.items}
+                    allItems={items}
+                    selectedIds={selectedIds}
+                    zoomLevel={zoomLevel}
+                    onSelectToggle={handleSelectToggle}
+                    onPhotoClick={onPhotoClick}
+                  />
+                )}
               </section>
             );
           }}
@@ -514,6 +820,32 @@ export default function Timeline({
               />
             ))}
           </div>
+        </div>
+      )}
+
+      {scrubberMarkers.length > 0 && (
+        <div 
+          className="timeline-scrubber-container" 
+          ref={scrubberContainerRef}
+          onPointerDown={handleScrubberPointerDown}
+        >
+          {scrubberMarkers.map((marker, i) => (
+            <div 
+              key={i} 
+              className={`scrubber-marker ${marker.isYear ? 'is-year' : 'is-dot'}`}
+              style={{ position: 'absolute', top: `${marker.percent * 100}%`, right: '14px', transform: 'translateY(-50%)' }}
+              title={marker.dateStr}
+            >
+              {marker.label}
+            </div>
+          ))}
+          <div 
+            className="timeline-scrubber-thumb" 
+            style={{ 
+              top: `${scrollPercent * 100}%`,
+              transition: isDragging ? 'none' : 'top 0.25s ease-out, width 0.15s ease, background-color 0.15s ease',
+            }} 
+          />
         </div>
       )}
 

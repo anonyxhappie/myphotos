@@ -18,6 +18,7 @@ import PeoplePetsPage from './pages/PeoplePetsPage';
 import PersonViewPage from './pages/PersonViewPage';
 import type { PersonResponse } from './api/people';
 import TagsPage from './pages/TagsPage';
+import DialogContainer, { dialog } from './components/DialogContainer';
 import TagViewPage from './pages/TagViewPage';
 
 export default function App() {
@@ -269,7 +270,7 @@ export default function App() {
       applyScanUpdate(updated);
     } catch (err) {
       console.error('Failed to pause scan:', err);
-      alert(err instanceof Error ? err.message : 'Failed to pause scan');
+      dialog.alert(err instanceof Error ? err.message : 'Failed to pause scan');
     }
   }, [applyScanUpdate]);
 
@@ -337,6 +338,8 @@ export default function App() {
             {/* Tags */}
             <Route path="/tags" element={<TagsPage scanProgress={scanProgress} onScanStarted={handleScanStarted} />} />
             <Route path="/tags/:id" element={<TagViewPage onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} scanProgress={scanProgress} onScanStarted={handleScanStarted} />} />
+
+            <Route path="/bin" element={<Timeline key="bin" title="Bin" searchQuery="" isBin={true} onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
             
             {/* People & Pets */}
             <Route path="/people" element={
@@ -378,8 +381,9 @@ export default function App() {
                   This feature is currently under development. Check back later for updates!
                 </p>
               </div>
-            } />
+             } />
           </Routes>
+          <DialogContainer />
         </main>
       </div>
 
@@ -504,13 +508,31 @@ export default function App() {
                   </p>
                 </div>
                 {isRunning && (
-                  <div
-                    className="w-4 h-4 rounded-full border-2 border-white/20 shrink-0"
-                    style={{
-                      borderTopColor: 'var(--color-primary, #6366f1)',
-                      animation: 'spin 0.8s linear infinite',
-                    }}
-                  />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={async () => {
+                        try {
+                          await pauseScan(taskId);
+                        } catch (err) {
+                          console.error("Failed to pause scan:", err);
+                        }
+                      }}
+                      className="p-1 rounded bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+                      title="Pause Scan"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="4" width="4" height="16" />
+                        <rect x="14" y="4" width="4" height="16" />
+                      </svg>
+                    </button>
+                    <div
+                      className="w-4 h-4 rounded-full border-2 border-white/20"
+                      style={{
+                        borderTopColor: 'var(--color-primary, #6366f1)',
+                        animation: 'spin 0.8s linear infinite',
+                      }}
+                    />
+                  </div>
                 )}
               </div>
 

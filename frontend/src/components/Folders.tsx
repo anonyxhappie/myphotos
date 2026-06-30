@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchSyncedDirectories, addSyncedDirectory, getThumbUrl, selectFolder } from '../api/client';
 import type { SyncedDirectory } from '../api/types';
+import { dialog } from './DialogContainer';
 
 export default function Folders() {
   const [folders, setFolders] = useState<SyncedDirectory[]>([]);
@@ -31,7 +32,7 @@ export default function Folders() {
       }
     } catch (e) {
       console.error(e);
-      alert('Failed to add directory');
+      dialog.alert('Failed to add directory');
     } finally {
       setAdding(false);
     }

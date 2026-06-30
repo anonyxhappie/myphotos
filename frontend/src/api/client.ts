@@ -4,6 +4,7 @@ import type {
   ScanEnqueuedResponse,
   ScanStatusResponse,
   TimelineResponse,
+  TimelineMetadataResponse,
   VolumeResponse,
   SyncedDirectory,
   Album,
@@ -28,6 +29,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export interface TimelineOptions {
   cursor?: string | null;
+  direction?: 'asc' | 'desc';
   limit?: number;
   favorites_only?: boolean;
   videos_only?: boolean;
@@ -39,6 +41,7 @@ export interface TimelineOptions {
 export async function fetchTimeline(opts: TimelineOptions = {}): Promise<TimelineResponse> {
   const params = new URLSearchParams({ limit: String(opts.limit || 200) });
   if (opts.cursor) params.set('cursor', opts.cursor);
+  if (opts.direction) params.set('direction', opts.direction);
   if (opts.favorites_only) params.set('favorites_only', 'true');
   if (opts.videos_only) params.set('videos_only', 'true');
   if (opts.locked_only) params.set('locked_only', 'true');
@@ -46,6 +49,16 @@ export async function fetchTimeline(opts: TimelineOptions = {}): Promise<Timelin
   if (opts.sort) params.set('sort', opts.sort);
   
   return fetchJson<TimelineResponse>(`${BASE}/timeline?${params}`);
+}
+
+export async function fetchTimelineMetadata(opts: TimelineOptions = {}): Promise<TimelineMetadataResponse> {
+  const params = new URLSearchParams();
+  if (opts.favorites_only) params.set('favorites_only', 'true');
+  if (opts.videos_only) params.set('videos_only', 'true');
+  if (opts.locked_only) params.set('locked_only', 'true');
+  if (opts.dir_id) params.set('dir_id', opts.dir_id);
+  
+  return fetchJson<TimelineMetadataResponse>(`${BASE}/timeline/metadata?${params}`);
 }
 
 // ─── Media Detail ───────────────────────────────────────────────
@@ -159,6 +172,12 @@ export async function retrainML(): Promise<ScanEnqueuedResponse> {
   });
 }
 
+export async function retrainFaces(): Promise<ScanEnqueuedResponse> {
+  return fetchJson<ScanEnqueuedResponse>(`${BASE}/ml/retrain_faces`, {
+    method: 'POST',
+  });
+}
+
 export async function resyncAll(): Promise<ScanEnqueuedResponse[]> {
   return fetchJson<ScanEnqueuedResponse[]>(`${BASE}/scan/resync_all`, {
     method: 'POST',
@@ -234,6 +253,24 @@ export async function bulkDeleteMedia(mediaIds: string[]): Promise<{status: stri
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ media_ids: mediaIds }),
+  });
+}
+
+export async function fetchBin(): Promise<TimelineResponse> {
+  return fetchJson<TimelineResponse>(`${BASE}/bin`);
+}
+
+export async function restoreFromBin(mediaIds: string[]): Promise<{status: string; restored_count: number}> {
+  return fetchJson<{status: string; restored_count: number}>(`${BASE}/bin/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_ids: mediaIds }),
+  });
+}
+
+export async function emptyBin(): Promise<{status: string; deleted_count: number}> {
+  return fetchJson<{status: string; deleted_count: number}>(`${BASE}/bin/empty`, {
+    method: 'POST',
   });
 }
 

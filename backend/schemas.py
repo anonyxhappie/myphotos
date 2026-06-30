@@ -148,6 +148,16 @@ class TimelineResponse(BaseModel):
     )
 
 
+class TimelineMetadataItem(BaseModel):
+    year: int
+    month: int
+    count: int
+
+class TimelineMetadataResponse(BaseModel):
+    total_count: int
+    items: list[TimelineMetadataItem]
+
+
 # ---------------------------------------------------------------------------
 # Scan requests / responses
 # ---------------------------------------------------------------------------

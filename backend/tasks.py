@@ -389,6 +389,22 @@ def task_process_ml_pipeline() -> dict:
             
             if result.get("status") == "idle" or processed == 0:
                 break
+                
+            from backend.services.task_control import pause_requested
+            if pause_requested(task_id):
+                write_task_progress(
+                    task_id=task_id,
+                    status="paused",
+                    total_found=total_to_process,
+                    processed=total_processed,
+                    faces_found=total_faces,
+                    labels_found=total_labels,
+                    path="AI Media Analysis",
+                    mode="scan",
+                    start_time=start_time
+                )
+                logger.info("ML pipeline paused.")
+                return {"status": "paused", "total_processed": total_processed}
             
             time.sleep(0.1)
                 

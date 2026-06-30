@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaItemDetail, MediaItemSummary } from '../api/types';
+import { dialog } from './DialogContainer';
 import {
   fetchMediaDetail,
   getOriginalUrl,
@@ -151,6 +152,18 @@ export default function Lightbox({
     };
   }, [nextItem, previousItem]);
 
+  const handleDelete = useCallback(async () => {
+    if (!onDelete) return;
+    try {
+      await bulkDeleteMedia([mediaId]);
+      window.dispatchEvent(new CustomEvent('media-deleted', { detail: [mediaId] }));
+      onDelete();
+    } catch (error) {
+      console.error('Failed to delete media:', error);
+      dialog.alert(error instanceof Error ? error.message : 'Failed to delete media');
+    }
+  }, [onDelete, mediaId]);
+
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -166,8 +179,12 @@ export default function Lightbox({
         event.preventDefault();
         onNext();
       }
+      if ((event.key === 'Backspace' || event.key === 'Delete') && onDelete) {
+        event.preventDefault();
+        void handleDelete();
+      }
     },
-    [onClose, onNext, onPrev],
+    [onClose, onNext, onPrev, onDelete, handleDelete],
   );
 
   useEffect(() => {
@@ -208,21 +225,7 @@ export default function Lightbox({
       await openInFinder(mediaId);
     } catch (error) {
       console.error('Failed to open in Finder:', error);
-      alert(error instanceof Error ? error.message : 'Failed to open in Finder');
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!onDelete) return;
-    if (!confirm('Are you sure you want to permanently delete this item? This will also clean up database records, vectors, and cached thumbnail files.')) {
-      return;
-    }
-    try {
-      await bulkDeleteMedia([mediaId]);
-      onDelete();
-    } catch (error) {
-      console.error('Failed to delete media:', error);
-      alert(error instanceof Error ? error.message : 'Failed to delete media');
+      dialog.alert(error instanceof Error ? error.message : 'Failed to open in Finder');
     }
   };
 

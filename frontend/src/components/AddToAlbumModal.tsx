@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { fetchAlbums, createAlbum, addMediaToAlbum, addDirectoryToAlbums } from '../api/client';
 import type { Album } from '../api/types';
+import { dialog } from './DialogContainer';
 
 interface AddToAlbumModalProps {
   selectedIds: string[];
@@ -37,7 +38,7 @@ export default function AddToAlbumModal({ selectedIds, dirId, onClose, onSuccess
       onSuccess();
     } catch (e) {
       console.error(e);
-      alert('Failed to add to album');
+      dialog.alert('Failed to add to album');
     } finally {
       setSubmitting(false);
     }
@@ -57,7 +58,7 @@ export default function AddToAlbumModal({ selectedIds, dirId, onClose, onSuccess
       onSuccess();
     } catch (e) {
       console.error(e);
-      alert('Failed to create album or add photos');
+      dialog.alert('Failed to create album or add photos');
       setSubmitting(false);
     }
   };

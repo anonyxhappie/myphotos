@@ -12,9 +12,11 @@ import {
   retryScan,
   resyncAll,
   retrainML,
+  retrainFaces,
   deleteScan,
   generateMissingThumbnails,
 } from '../api/client';
+import { dialog } from './DialogContainer';
 
 interface SettingsProps {
   onScanStarted?: (taskId: string, path: string, mode: 'scan' | 'takeout') => void;
@@ -56,20 +58,20 @@ export default function Settings({
   }, [loadAuditLogs]);
 
   const handleFactoryReset = async () => {
-    const confirm1 = confirm("Are you absolutely sure you want to factory reset the platform? This will clear all database entries and local cache. This action cannot be undone.");
+    const confirm1 = await dialog.confirm("Are you absolutely sure you want to factory reset the platform? This will clear all database entries and local cache. This action cannot be undone.");
     if (!confirm1) return;
     
-    const confirm2 = confirm("Please confirm once more. All synced folders, media items, tags, and albums will be deleted permanently.");
+    const confirm2 = await dialog.confirm("Please confirm once more. All synced folders, media items, tags, and albums will be deleted permanently.");
     if (!confirm2) return;
     
     try {
       setResetting(true);
       await factoryReset();
-      alert("Factory reset complete. The application will now reload.");
+      await dialog.alert("Factory reset complete. The application will now reload.");
       window.location.reload();
     } catch (e) {
       console.error(e);
-      alert("Failed to factory reset: " + (e instanceof Error ? e.message : String(e)));
+      dialog.alert("Failed to factory reset: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setResetting(false);
     }
@@ -150,7 +152,7 @@ export default function Settings({
       }
     } catch (e) {
       console.error(`Failed to ${action} scan`, e);
-      alert(e instanceof Error ? e.message : `Failed to ${action} scan`);
+      dialog.alert(e instanceof Error ? e.message : `Failed to ${action} scan`);
     }
   };
 
@@ -184,12 +186,12 @@ export default function Settings({
       void loadAuditLogs();
     } catch (e) {
       console.error('Failed to add directory', e);
-      alert('Failed to add directory');
+      dialog.alert('Failed to add directory');
     }
   };
 
   const handleRemove = async (id: string) => {
-    if (!confirm('Stop syncing this directory and remove all synced media from your library? This cannot be undone.')) return;
+    if (!(await dialog.confirm('Stop syncing this directory and remove all synced media from your library? This cannot be undone.'))) return;
     try {
       await removeSyncedDirectory(id);
       await loadDirectories();
@@ -200,7 +202,7 @@ export default function Settings({
   };
 
   const handleResyncAll = async () => {
-    if (!confirm('Start a background scan for all monitored directories?')) return;
+    if (!(await dialog.confirm('Start a background scan for all monitored directories?'))) return;
     try {
       const results = await resyncAll();
       for (const res of results) {
@@ -210,12 +212,12 @@ export default function Settings({
       }
       void loadAuditLogs();
     } catch (e) {
-      alert('Failed to trigger resync: ' + (e instanceof Error ? e.message : String(e)));
+      dialog.alert('Failed to trigger resync: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
 
   const handleRetrainML = async () => {
-    if (!confirm('This will reset AI embeddings and faces, then re-process all media. This might take a while. Continue?')) return;
+    if (!(await dialog.confirm('This will reset AI embeddings and faces, then re-process all media. This might take a while. Continue?'))) return;
     try {
       const res = await retrainML();
       if (res.task_id && onScanStarted) {
@@ -223,17 +225,30 @@ export default function Settings({
       }
       void loadAuditLogs();
     } catch (e) {
-      alert('Failed to trigger retraining: ' + (e instanceof Error ? e.message : String(e)));
+      dialog.alert('Failed to trigger retraining: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const handleRetrainFaces = async () => {
+    if (!(await dialog.confirm('This will reset and re-detect faces for all media. Continue?'))) return;
+    try {
+      const res = await retrainFaces();
+      if (res.task_id && onScanStarted) {
+        onScanStarted(res.task_id, 'Face Detection', 'scan');
+      }
+      void loadAuditLogs();
+    } catch (e) {
+      dialog.alert('Failed to trigger face retraining: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
 
   const handleGenerateThumbnails = async () => {
     try {
       const result = await generateMissingThumbnails();
-      alert(result.message);
+      dialog.alert(result.message);
       void loadAuditLogs();
     } catch (e) {
-      alert('Failed to generate thumbnails: ' + (e instanceof Error ? e.message : String(e)));
+      dialog.alert('Failed to generate thumbnails: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
 
@@ -399,6 +414,15 @@ export default function Settings({
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                      <path d="M2 12h4l2-9 5 18 2-9h5"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={handleRetrainFaces}
+                  className="p-2 rounded-lg bg-pink-500/10 hover:bg-pink-500/20 text-pink-400 transition-colors border border-pink-500/20"
+                  title="Retrain Faces"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                     <path d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
                   </svg>
                 </button>
                 <button

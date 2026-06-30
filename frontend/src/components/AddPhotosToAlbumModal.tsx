@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { MediaItemSummary } from '../api/types';
 import { fetchTimeline, addMediaToAlbum, fetchAlbumMedia } from '../api/client';
 import PhotoCard from './PhotoCard';
+import { dialog } from './DialogContainer';
 
 interface AddPhotosToAlbumModalProps {
   albumId: string;
@@ -73,7 +74,7 @@ export default function AddPhotosToAlbumModal({ albumId, onClose, onSuccess }: A
       onSuccess();
     } catch (e) {
       console.error(e);
-      alert('Failed to add photos to album');
+      dialog.alert('Failed to add photos to album');
     } finally {
       setSubmitting(false);
     }

@@ -30,7 +30,8 @@ type IconName =
   | 'lock'
   | 'people'
   | 'settings'
-  | 'tag';
+  | 'tag'
+  | 'trash';
 
 function BrandMark() {
   return (
@@ -155,6 +156,14 @@ function NavigationIcon({ name }: { name: IconName }) {
       </svg>
     );
   }
+  if (name === 'trash') {
+    return (
+      <svg {...common}>
+        <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
+        <path d="M10 11v6M14 11v6" />
+      </svg>
+    );
+  }
   return null;
 }
 
@@ -170,6 +179,7 @@ const libraryItems: Array<{ to: string; label: string; icon: IconName }> = [
 
 const utilityItems: Array<{ to: string; label: string; icon: IconName }> = [
   { to: '/locked', label: 'Locked folder', icon: 'lock' },
+  { to: '/bin', label: 'Bin', icon: 'trash' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 
