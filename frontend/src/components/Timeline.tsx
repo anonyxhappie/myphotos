@@ -4,6 +4,7 @@ import type { MediaItemSummary, TimelineMetadataResponse } from '../api/types';
 import { fetchTimeline, searchPhotos, bulkDeleteMedia, fetchAlbumMedia, fetchTagMedia, fetchTimelineMetadata, fetchBin, emptyBin } from '../api/client';
 import PhotoCard from './PhotoCard';
 import AddToAlbumModal from './AddToAlbumModal';
+import { dialog } from './DialogContainer';
 
 interface TimelineProps {
   title?: string;
@@ -637,11 +638,12 @@ export default function Timeline({
     videosOnly,
   ]);
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = useCallback(async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
     if (isBin) {
-      if (!confirm(`Are you sure you want to permanently delete these ${ids.length} item(s)? This will also clean up database records, vectors, and cached thumbnail files.`)) {
+      const confirmed = await dialog.confirm(`Are you sure you want to permanently delete these ${ids.length} item(s)? This will also clean up database records, vectors, and cached thumbnail files.`);
+      if (!confirmed) {
         return;
       }
     }
@@ -652,9 +654,34 @@ export default function Timeline({
       setSelectedIds(new Set());
     } catch (e) {
       console.error(e);
-      alert('Failed to delete selected media');
+      void dialog.alert('Failed to delete selected media');
     }
-  };
+  }, [selectedIds, isBin, items.length, resultSize, onTotalCountChange]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedIds.size === 0) return;
+      
+      const activeEl = document.activeElement;
+      if (activeEl && (
+        activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'TEXTAREA' ||
+        activeEl.getAttribute('contenteditable') === 'true'
+      )) {
+        return;
+      }
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        void handleDeleteSelected();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedIds, handleDeleteSelected]);
 
   return (
     <div className="timeline-view" data-zoom={zoomLevel}>
@@ -680,7 +707,8 @@ export default function Timeline({
               {isBin && resultCount > 0 && (
                 <button 
                   onClick={async () => {
-                    if (!confirm('Empty bin permanently?')) return;
+                    const confirmed = await dialog.confirm('Empty bin permanently?');
+                    if (!confirmed) return;
                     try { await emptyBin(); setItems([]); onTotalCountChange(0, 0); } catch (e) { console.error(e); }
                   }}
                   className="bg-[var(--color-danger)]/10 text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white px-3 py-1 rounded-md text-sm font-medium transition-colors border border-[var(--color-danger)]/20"

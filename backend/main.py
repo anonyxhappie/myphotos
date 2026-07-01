@@ -1763,6 +1763,8 @@ def get_people(db: Session = Depends(get_db)):
             cover_face_id=p.cover_face_id,
             face_count=count
         ))
+        
+    responses.sort(key=lambda x: x.face_count, reverse=True)
     return responses
 
 @app.put("/api/people/{person_id}", response_model=PersonResponse)

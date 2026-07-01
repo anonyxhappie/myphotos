@@ -274,18 +274,16 @@ export default function Lightbox({
               </svg>
             </a>
           )}
-          {originalAvailable && (
-            <button
-              className="lightbox-icon-button"
-              onClick={handleOpenInFinder}
-              aria-label="Open in Finder"
-              title="Open in Finder"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '20px', height: '20px' }}>
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-          )}
+          <button
+            className="lightbox-icon-button"
+            onClick={handleOpenInFinder}
+            aria-label="Open in Finder"
+            title="Open in Finder"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '20px', height: '20px' }}>
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+          </button>
           <button
             className={`lightbox-icon-button ${detail?.is_favorite ? 'is-active is-favorite' : ''}`}
             onClick={handleToggleFavorite}
@@ -448,7 +446,19 @@ export default function Lightbox({
           <div className="metadata-header">
             <div>
               <h2>{detail.filename}</h2>
-              <p>{detail.original_path}</p>
+              <p className="flex items-center gap-1.5 flex-wrap">
+                <span>{detail.original_path}</span>
+                <button
+                  onClick={handleOpenInFinder}
+                  className="p-1 rounded hover:bg-white/10 text-[var(--color-accent)] hover:text-white transition-colors flex items-center justify-center"
+                  style={{ border: 0, background: 'none', padding: '2px', cursor: 'pointer' }}
+                  title="Open in Finder/File Explorer"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '12px', height: '12px' }}>
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                </button>
+              </p>
             </div>
             <button className="lightbox-icon-button" onClick={() => setShowInfo(false)} aria-label="Close information">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>

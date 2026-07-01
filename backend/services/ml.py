@@ -14,6 +14,19 @@ from backend.db.models import MediaItem, Tag, Face, Person
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
+STOP_WORDS = {
+    "about", "above", "after", "again", "against", "also", "always", "because", "been", "before", 
+    "being", "below", "between", "both", "cannot", "could", "couldn", "didn", "does", "doesn", 
+    "doing", "down", "during", "each", "from", "further", "hadn", "hasn", "have", "haven", 
+    "having", "here", "hers", "herself", "himself", "into", "itself", "just", "know", "like", 
+    "more", "most", "mustn", "myself", "once", "only", "other", "ours", "ourselves", "over", 
+    "same", "shan", "should", "shouldn", "some", "such", "than", "that", "their", "theirs", 
+    "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "under", 
+    "until", "very", "wasn", "were", "weren", "what", "when", "where", "which", "while", "whom", 
+    "will", "with", "would", "wouldn", "your", "yours", "yourself", "yourselves", "make", "want", 
+    "life", "best", "were", "some", "much", "many", "well", "good", "even"
+}
+
 logger = logging.getLogger(__name__)
 
 # Singletons for models to avoid reloading
@@ -161,6 +174,8 @@ def index_unprocessed_items(db: Session, batch_size: int = 100):
                     text_data = pytesseract.image_to_string(ml_input_img)
                     words = set(re.findall(r'\b[A-Za-z]{4,}\b', text_data.lower()))
                     for word in words:
+                        if word in STOP_WORDS:
+                            continue
                         tag = get_or_create_tag(db, word, "ai_ocr")
                         if tag not in item.tags:
                             item.tags.append(tag)

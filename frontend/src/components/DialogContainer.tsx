@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 type DialogType = 'alert' | 'confirm';
 
@@ -47,19 +47,20 @@ export const dialog = new DialogService();
 
 export default function DialogContainer() {
   const [options, setOptions] = useState<DialogOptions | null>(null);
+  const okButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     return dialog.subscribe(setOptions);
   }, []);
 
-  if (!options) return null;
-
   const handleConfirm = () => {
+    if (!options) return;
     options.resolve(options.type === 'confirm' ? true : undefined);
     setOptions(null);
   };
 
   const handleCancel = () => {
+    if (!options) return;
     if (options.type === 'confirm') {
       options.resolve(false);
     } else {
@@ -67,6 +68,29 @@ export default function DialogContainer() {
     }
     setOptions(null);
   };
+
+  useEffect(() => {
+    if (!options) return;
+
+    const focusTimeout = setTimeout(() => {
+      okButtonRef.current?.focus();
+    }, 50);
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      clearTimeout(focusTimeout);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [options]);
+
+  if (!options) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
@@ -91,6 +115,7 @@ export default function DialogContainer() {
             </button>
           )}
           <button
+            ref={okButtonRef}
             onClick={handleConfirm}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] hover:brightness-110 text-white transition-all shadow-lg shadow-indigo-500/20"
           >
