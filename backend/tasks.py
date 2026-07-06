@@ -17,6 +17,7 @@ Tasks defined here:
 from __future__ import annotations
 
 import logging
+import threading
 
 from backend.celery_app import celery_app
 
@@ -26,6 +27,45 @@ from backend.db.engine import SessionLocal
 from backend.db.models import MediaItem
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_missing_thumbnails_for_root(root_path: str) -> None:
+    """Fill in thumbnails for items already ingested under a scanned root."""
+    from backend.services.thumbnails import generate_thumbnails_batch
+
+    with SessionLocal() as session:
+        items = (
+            session.query(MediaItem)
+            .filter(
+                MediaItem.original_path.like(f"{root_path}%"),
+                MediaItem.thumb_path.is_(None),
+                (MediaItem.mime_type.like("image/%") | MediaItem.mime_type.like("video/%")),
+            )
+            .all()
+        )
+        if not items:
+            return
+
+        work = [(item.original_path, item.sha256) for item in items]
+        results = generate_thumbnails_batch(work)
+        item_by_sha256 = {item.sha256: item for item in items}
+        updated = 0
+        for tr in results:
+            item = item_by_sha256.get(tr.sha256)
+            if not item:
+                continue
+            if tr.thumb_rel_path:
+                item.thumb_path = tr.thumb_rel_path
+            if tr.preview_rel_path:
+                item.preview_path = tr.preview_rel_path
+            if tr.proxy_rel_path:
+                item.proxy_path = tr.proxy_rel_path
+            if not item.phash and tr.phash:
+                item.phash = tr.phash
+            if tr.thumb_rel_path or tr.preview_rel_path or tr.proxy_rel_path or tr.phash:
+                updated += 1
+        if updated:
+            session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +179,11 @@ def task_scan_directory(
 
         if generate_thumbs:
             try:
-                task_generate_thumbnails.delay()
+                threading.Thread(
+                    target=_generate_missing_thumbnails_for_root,
+                    args=(root_path,),
+                    daemon=True,
+                ).start()
             except Exception as thumb_exc:
                 logger.warning("Thumbnail generation automatic trigger failed: %s", thumb_exc)
 
@@ -442,4 +486,3 @@ def task_scan_tag(tag_id: str, confidence_threshold: float = 0.17, task_id: str 
     logger.info("Starting background tag scan for tag_id: %s", tag_id)
     with SessionLocal() as session:
         return scan_tag(session, tag_id, confidence_threshold=confidence_threshold, task_id=task_id)
-

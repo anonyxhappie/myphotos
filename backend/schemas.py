@@ -82,6 +82,7 @@ class MediaItemDetail(BaseModel):
     # Cache paths
     thumb_path: Optional[str] = None
     preview_path: Optional[str] = None
+    proxy_path: Optional[str] = None
 
     # EXIF / Takeout metadata
     date_taken: Optional[datetime] = None
@@ -302,4 +303,3 @@ class TagWithCount(BaseModel):
     media_count: int
     
     model_config = {"from_attributes": True}
-

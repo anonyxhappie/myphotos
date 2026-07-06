@@ -132,6 +132,7 @@ class MediaItem(Base):
     # -- cache paths -------------------------------------------------------
     thumb_path: str = Column(Text, nullable=True, comment="Relative path to 256px WebP thumbnail in .local_cache")
     preview_path: str = Column(Text, nullable=True, comment="Relative path to 1080p WebP preview in .local_cache")
+    proxy_path: str = Column(Text, nullable=True, comment="Relative path to browser-playable MP4 proxy in .local_cache")
 
     # -- EXIF & Google Takeout metadata ------------------------------------
     date_taken: datetime = Column(DateTime(timezone=True), nullable=True, index=True, comment="EXIF DateTimeOriginal or Takeout timestamp")

@@ -4,8 +4,10 @@ import { dialog } from './DialogContainer';
 import {
   fetchMediaDetail,
   getOriginalUrl,
+  getProxyUrl,
   getPreviewUrl,
   getThumbUrl,
+  prepareVideoAssets,
   toggleFavorite,
   toggleLock,
   openInFinder,
@@ -58,6 +60,18 @@ const COMMON_VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mov', '.avi', '.mkv', '.m4v', '.3gp', '.wmv', '.webm', '.ogv',
 ]);
 
+function inferVideoMimeType(mime: string | null | undefined, filename?: string): string | undefined {
+  if (mime?.startsWith('video/')) return mime;
+  if (!filename) return mime || undefined;
+
+  const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+  if (ext === '.mov') return 'video/quicktime';
+  if (ext === '.m4v') return 'video/x-m4v';
+  if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.webm') return 'video/webm';
+  return mime || undefined;
+}
+
 function inferMediaType(mime: string | null | undefined, filename?: string): 'image' | 'video' | 'unknown' {
   if (mime) {
     if (mime.startsWith('video/')) return 'video';
@@ -88,7 +102,10 @@ export default function Lightbox({
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [originalLoaded, setOriginalLoaded] = useState(false);
   const [originalFailed, setOriginalFailed] = useState(false);
-  const [videoFailed, setVideoFailed] = useState(false);
+  const [canPlayVideo, setCanPlayVideo] = useState(true);
+  const [videoAssetsPreparing, setVideoAssetsPreparing] = useState(false);
+  const [videoPlaybackFailed, setVideoPlaybackFailed] = useState(false);
+  const videoPrepareInFlight = useRef<string | null>(null);
   const touchStartX = useRef<number | null>(null);
 
   // Use summary's mime_type for type detection — it's always fresh (from props),
@@ -98,7 +115,15 @@ export default function Lightbox({
   const isGif = isGifType(item.mime_type || detail?.mime_type || '');
   const isImage = mediaType === 'image';
   const hasPreview = Boolean(detail?.preview_path);
+  const hasProxy = Boolean(detail?.proxy_path);
   const originalAvailable = detail?.original_available ?? item.is_online;
+  const videoMimeType = inferVideoMimeType(detail?.mime_type || item.mime_type, detail?.filename || item.id);
+  const fileExt = (detail?.filename || item.id).slice((detail?.filename || item.id).lastIndexOf('.')).toLowerCase();
+  const needsProxyPlayback = isVideo && fileExt === '.mov';
+  const useNativeVideo = isVideo && originalAvailable && canPlayVideo && !needsProxyPlayback;
+  const hasPlayableProxy = hasProxy && !videoPlaybackFailed;
+  const videoSourceUrl = hasPlayableProxy ? getProxyUrl(mediaId) : (needsProxyPlayback ? '' : getOriginalUrl(mediaId));
+  const videoSourceKey = hasPlayableProxy ? 'proxy' : needsProxyPlayback ? 'proxy-pending' : 'original';
   const transitionClass = direction > 0
     ? 'media-enter-next'
     : direction < 0
@@ -131,8 +156,59 @@ export default function Lightbox({
     setPreviewLoaded(false);
     setOriginalLoaded(false);
     setOriginalFailed(false);
-    setVideoFailed(false);
+    setCanPlayVideo(true);
+    setVideoAssetsPreparing(false);
+    setVideoPlaybackFailed(false);
+    videoPrepareInFlight.current = null;
   }, [mediaId]);
+
+  useEffect(() => {
+    if (!isVideo || !originalAvailable || !videoMimeType) {
+      setCanPlayVideo(false);
+      return;
+    }
+    const probe = document.createElement('video');
+    const canPlay = probe.canPlayType(videoMimeType);
+    setCanPlayVideo(canPlay === 'probably' || canPlay === 'maybe');
+  }, [isVideo, originalAvailable, videoMimeType]);
+
+  useEffect(() => {
+    if (!isVideo || !originalAvailable || hasProxy || !needsProxyPlayback) {
+      setVideoAssetsPreparing(false);
+      return;
+    }
+    if (videoPrepareInFlight.current === mediaId) {
+      return;
+    }
+    let cancelled = false;
+    videoPrepareInFlight.current = mediaId;
+    setVideoAssetsPreparing(true);
+    prepareVideoAssets(mediaId)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.proxy_path || result.preview_path) {
+          setDetail((current) => current ? {
+            ...current,
+            proxy_path: result.proxy_path ?? current.proxy_path,
+            preview_path: result.preview_path ?? current.preview_path,
+          } : current);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to prepare video assets:', error);
+      })
+      .finally(() => {
+        if (videoPrepareInFlight.current === mediaId) {
+          videoPrepareInFlight.current = null;
+        }
+        if (!cancelled) setVideoAssetsPreparing(false);
+      });
+
+    return () => {
+      cancelled = true;
+      setVideoAssetsPreparing(false);
+    };
+  }, [hasProxy, isVideo, mediaId, needsProxyPlayback, originalAvailable]);
 
   // Warm the adjacent previews so arrow navigation replaces the current
   // image immediately instead of revealing a blank frame.
@@ -238,11 +314,11 @@ export default function Lightbox({
     else onNext?.();
   };
 
-  const showLoading = isVideo
-    ? !originalLoaded && !videoFailed
+  const showLoading = videoAssetsPreparing || (useNativeVideo
+    ? !originalLoaded
     : originalAvailable
       ? !(previewLoaded || originalLoaded) && !originalFailed
-      : !previewLoaded && !originalFailed;
+      : !previewLoaded && !originalFailed);
   const fallbackUrl = hasPreview ? getPreviewUrl(mediaId) : getThumbUrl(mediaId);
 
   return (
@@ -352,10 +428,10 @@ export default function Lightbox({
             </div>
           )}
 
-          {isVideo ? (
+          {isVideo && (hasPlayableProxy || useNativeVideo) ? (
             originalAvailable ? (
               <video
-                key={mediaId}
+                key={`${mediaId}-${videoSourceKey}`}
                 className={`lightbox-video ${originalLoaded ? 'is-loaded' : ''}`}
                 controls
                 autoPlay
@@ -363,13 +439,31 @@ export default function Lightbox({
                 preload="metadata"
                 poster={fallbackUrl}
                 onLoadedMetadata={() => setOriginalLoaded(true)}
-                onError={() => setVideoFailed(true)}
+                onError={() => {
+                  if (hasPlayableProxy) {
+                    setVideoPlaybackFailed(true);
+                  } else {
+                    setCanPlayVideo(false);
+                  }
+                }}
+                src={videoSourceUrl}
               >
-                <source src={getOriginalUrl(mediaId)} type={detail?.mime_type || item.mime_type || undefined} />
-                Your browser does not support this video format.
+                {hasPlayableProxy ? null : 'Your browser does not support this video format.'}
               </video>
             ) : (
               <MediaUnavailable message={detail?.offline_message} />
+            )
+          ) : isVideo ? (
+            hasPreview ? (
+              <img
+                className={`lightbox-media-layer lightbox-preview is-visible`}
+                src={fallbackUrl}
+                alt={detail?.filename || 'Media preview'}
+                decoding="async"
+                onLoad={() => setPreviewLoaded(true)}
+              />
+            ) : (
+              <MediaUnavailable message={detail?.offline_message || 'This video cannot be previewed in the browser.'} />
             )
           ) : isImage ? (
             <>
@@ -430,7 +524,13 @@ export default function Lightbox({
           </button>
         )}
 
-        {videoFailed && (
+        {isVideo && !hasPlayableProxy && !useNativeVideo && hasPreview && (
+          <div className="lightbox-format-warning">
+            This video cannot be played in the browser. Showing a preview frame instead.
+            <a href={getOriginalUrl(mediaId)} target="_blank" rel="noreferrer">Open original</a>
+          </div>
+        )}
+        {isVideo && !hasPlayableProxy && !useNativeVideo && !hasPreview && (
           <div className="lightbox-format-warning">
             This video codec is not supported by your browser.
             <a href={getOriginalUrl(mediaId)} target="_blank" rel="noreferrer">Open original</a>

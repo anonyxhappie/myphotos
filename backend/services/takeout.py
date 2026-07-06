@@ -385,6 +385,11 @@ def parse_takeout_directory(
                             preview_path = generate_preview(file_path, sha256)
                             if preview_path:
                                 updated_fields["preview_path"] = preview_path
+                        if ext in settings.SUPPORTED_VIDEO_EXTENSIONS and "proxy_path" not in updated_fields:
+                            from backend.services.thumbnails import _generate_video_proxy
+                            proxy_path = _generate_video_proxy(file_path, sha256)
+                            if proxy_path:
+                                updated_fields["proxy_path"] = proxy_path
                                 
                     if updated_fields:
                         from backend.db.models import MediaItem
@@ -428,9 +433,13 @@ def parse_takeout_directory(
                 # 6. Thumbnails
                 thumb_path = None
                 preview_path = None
+                proxy_path = None
                 if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
                     thumb_path = generate_thumbnail(file_path, sha256)
                     preview_path = generate_preview(file_path, sha256)
+                    if ext in settings.SUPPORTED_VIDEO_EXTENSIONS:
+                        from backend.services.thumbnails import _generate_video_proxy
+                        proxy_path = _generate_video_proxy(file_path, sha256)
 
                 # 7. Build record
                 media_id = str(uuid.uuid4())
@@ -445,6 +454,7 @@ def parse_takeout_directory(
                     "file_size_bytes": stat.st_size,
                     "thumb_path": thumb_path,
                     "preview_path": preview_path,
+                    "proxy_path": proxy_path,
                     "date_modified": datetime.fromtimestamp(
                         stat.st_mtime, tz=timezone.utc
                     ),

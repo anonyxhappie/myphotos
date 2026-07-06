@@ -247,7 +247,7 @@ def _load_existing_items_metadata(session: Session) -> dict[str, tuple[bool, boo
 
     For a library of 1M photos this dict uses ~80-100 MB of RAM, which is acceptable.
     """
-    stmt = select(MediaItem.sha256, MediaItem.thumb_path, MediaItem.preview_path)
+    stmt = select(MediaItem.sha256, MediaItem.thumb_path, MediaItem.preview_path, MediaItem.proxy_path)
     rows = session.execute(stmt).all()
     return {
         row[0]: (row[1] is not None, row[2] is not None)
@@ -453,14 +453,19 @@ def scan_directory(
                             preview_path = generate_preview(file_path, sha256)
                             if preview_path:
                                 updated_fields["preview_path"] = preview_path
+                        if ext in settings.SUPPORTED_VIDEO_EXTENSIONS and "proxy_path" not in updated_fields:
+                            from backend.services.thumbnails import _generate_video_proxy
+                            proxy_path = _generate_video_proxy(file_path, sha256)
+                            if proxy_path:
+                                updated_fields["proxy_path"] = proxy_path
                                 
                     if updated_fields:
                         session.query(MediaItem).filter(MediaItem.sha256 == sha256).update(updated_fields)
                         session.commit()
-                        existing_items[sha256] = (
-                            has_thumb or "thumb_path" in updated_fields,
-                            has_preview or "preview_path" in updated_fields
-                        )
+                    existing_items[sha256] = (
+                        has_thumb or "thumb_path" in updated_fields,
+                        has_preview or "preview_path" in updated_fields
+                    )
 
                     result.duplicates_skipped += 1
                     report_progress_if_needed(file_path)
@@ -486,9 +491,13 @@ def scan_directory(
                 # 5. Thumbnail generation (optional)
                 thumb_path = None
                 preview_path = None
+                proxy_path = None
                 if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
                     thumb_path = generate_thumbnail(file_path, sha256)
                     preview_path = generate_preview(file_path, sha256)
+                    if ext in settings.SUPPORTED_VIDEO_EXTENSIONS:
+                        from backend.services.thumbnails import _generate_video_proxy
+                        proxy_path = _generate_video_proxy(file_path, sha256)
 
                 # 6. Build record
                 record: MediaItemDict = {
@@ -502,6 +511,7 @@ def scan_directory(
                     "file_size_bytes": stat.st_size,
                     "thumb_path": thumb_path,
                     "preview_path": preview_path,
+                    "proxy_path": proxy_path,
                     "date_modified": datetime.fromtimestamp(
                         stat.st_mtime, tz=timezone.utc
                     ),
@@ -577,6 +587,10 @@ def scan_file(
                 if not existing.preview_path:
                     existing.preview_path = generate_preview(file_path, sha256)
                     updated = True
+                if not existing.proxy_path and ext in settings.SUPPORTED_VIDEO_EXTENSIONS:
+                    from backend.services.thumbnails import _generate_video_proxy
+                    existing.proxy_path = _generate_video_proxy(file_path, sha256)
+                    updated = True
                 if updated:
                     session.commit()
             return False
@@ -591,10 +605,14 @@ def scan_file(
         
         thumb_path = None
         preview_path = None
+        proxy_path = None
         if generate_thumbs and ext in settings.SUPPORTED_EXTENSIONS:
             settings.ensure_cache_dirs()
             thumb_path = generate_thumbnail(file_path, sha256)
             preview_path = generate_preview(file_path, sha256)
+            if ext in settings.SUPPORTED_VIDEO_EXTENSIONS:
+                from backend.services.thumbnails import _generate_video_proxy
+                proxy_path = _generate_video_proxy(file_path, sha256)
             
         record: MediaItemDict = {
             "id": str(uuid.uuid4()),
@@ -607,6 +625,7 @@ def scan_file(
             "file_size_bytes": stat.st_size,
             "thumb_path": thumb_path,
             "preview_path": preview_path,
+            "proxy_path": proxy_path,
             "date_modified": datetime.fromtimestamp(
                 stat.st_mtime, tz=timezone.utc
             ),

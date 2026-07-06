@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation, useParams } from 'react-router-dom';
 import type { MediaItemSummary, ScanStatusResponse } from './api/types';
-import { fetchTimeline, fetchScans, pauseScan } from './api/client';
+import { fetchMediaDetail, fetchTimeline, fetchScans, pauseScan } from './api/client';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import Timeline from './components/Timeline';
@@ -20,6 +20,82 @@ import type { PersonResponse } from './api/people';
 import TagsPage from './pages/TagsPage';
 import DialogContainer, { dialog } from './components/DialogContainer';
 import TagViewPage from './pages/TagViewPage';
+
+function mediaDetailToSummary(detail: Awaited<ReturnType<typeof fetchMediaDetail>>): MediaItemSummary {
+  return {
+    id: detail.id,
+    sha256: detail.sha256,
+    thumb_path: detail.thumb_path,
+    date_taken: detail.date_taken,
+    date_modified: detail.date_modified,
+    width: detail.width,
+    height: detail.height,
+    mime_type: detail.mime_type,
+    is_favorite: detail.is_favorite,
+    is_locked: detail.is_locked,
+    is_online: detail.is_online,
+  };
+}
+
+function MediaRoute({
+  onClose,
+  onDelete,
+}: {
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { id } = useParams();
+  const [detail, setDetail] = useState<Awaited<ReturnType<typeof fetchMediaDetail>> | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    fetchMediaDetail(id)
+      .then((response) => {
+        if (!cancelled) setDetail(response);
+      })
+      .catch((err) => {
+        console.error('Failed to load media route detail:', err);
+        if (!cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (!id) return null;
+  if (error) {
+    return <div className="p-6 text-white">Media not found.</div>;
+  }
+  if (!detail) {
+    return <div className="library-loading" aria-label="Loading media"><div className="loading-spinner" /></div>;
+  }
+
+  const summary = mediaDetailToSummary(detail);
+  const returnTo = typeof location.state === 'object' && location.state && 'from' in location.state
+    ? (location.state as { from?: string }).from
+    : null;
+  const returnPath = returnTo ? returnTo.split('?')[0] : null;
+  return (
+    <Lightbox
+      mediaId={detail.id}
+      item={summary}
+      direction={0}
+      onClose={() => {
+        onClose();
+        if (returnPath) {
+          void navigate(returnPath, { replace: true });
+        } else {
+          void navigate(-1);
+        }
+      }}
+      onDelete={onDelete}
+    />
+  );
+}
 
 export default function App() {
   const navigate = useNavigate();
@@ -62,11 +138,18 @@ export default function App() {
   const galleryRefreshTimer = useRef<number | null>(null);
 
   const handlePhotoClick = useCallback((item: MediaItemSummary, list: MediaItemSummary[]) => {
-    const idx = list.findIndex(x => x.id === item.id);
     setNavDirection(0);
-    setSelectedMediaIndex(idx !== -1 ? idx : null);
     setActiveMediaList(list);
-  }, []);
+    setSelectedMediaIndex(list.findIndex((x) => x.id === item.id));
+    navigate(`/media/${item.id}`, {
+      state: { backgroundLocation: location },
+    });
+  }, [location, navigate]);
+
+  // When opened via in-app click, location.state has backgroundLocation so Routes
+  // keeps rendering the page underneath (timeline stays mounted with scroll position).
+  // On hard reload, backgroundLocation is absent so /media/:id renders MediaRoute standalone.
+  const backgroundLocation = (location.state as any)?.backgroundLocation as ReturnType<typeof useLocation> | undefined;
 
   const handleTotalCountChange = useCallback((count: number, size: number) => {
     setTotalCount(count);
@@ -299,7 +382,7 @@ export default function App() {
         />
 
         <main className="app-main">
-          <Routes>
+          <Routes location={backgroundLocation || location}>
             <Route path="/" element={
               isLibraryLoading ? (
                 <div className="library-loading" aria-label="Loading photo library">
@@ -369,6 +452,7 @@ export default function App() {
             <Route path="/screenshots" element={<Timeline key="screenshots" title="Screenshots" searchQuery="screenshot, user interface, screen capture" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
             <Route path="/memes" element={<Timeline key="memes" title="Memes" searchQuery="meme, funny internet meme, comic" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
             <Route path="/quotes" element={<Timeline key="quotes" title="Quotes" searchQuery="quote, motivational, typography, text" onPhotoClick={handlePhotoClick} onTotalCountChange={handleTotalCountChange} />} />
+            <Route path="/media/:id" element={<MediaRoute onClose={() => setSelectedMediaIndex(null)} onDelete={handleLightboxDelete} />} />
 
             <Route path="*" element={
               <div className="flex flex-col items-center justify-center w-full h-full text-[var(--color-text-secondary)]">
@@ -387,7 +471,7 @@ export default function App() {
         </main>
       </div>
 
-      {selectedMediaIndex !== null && activeMediaList.length > 0 && (
+      {selectedMediaIndex !== null && activeMediaList.length > 0 && backgroundLocation && (
         <Lightbox
           mediaId={activeMediaList[selectedMediaIndex].id}
           item={activeMediaList[selectedMediaIndex]}
@@ -398,12 +482,20 @@ export default function App() {
               : undefined
           }
           direction={navDirection}
-          onClose={() => setSelectedMediaIndex(null)}
+          onClose={() => {
+            setSelectedMediaIndex(null);
+            navigate(-1);
+          }}
           onPrev={
             selectedMediaIndex > 0
               ? () => {
                   setNavDirection(-1);
-                  setSelectedMediaIndex(selectedMediaIndex - 1);
+                  const newIndex = selectedMediaIndex - 1;
+                  setSelectedMediaIndex(newIndex);
+                  navigate(`/media/${activeMediaList[newIndex].id}`, {
+                    state: { backgroundLocation },
+                    replace: true,
+                  });
                 }
               : undefined
           }
@@ -411,7 +503,12 @@ export default function App() {
             selectedMediaIndex < activeMediaList.length - 1
               ? () => {
                   setNavDirection(1);
-                  setSelectedMediaIndex(selectedMediaIndex + 1);
+                  const newIndex = selectedMediaIndex + 1;
+                  setSelectedMediaIndex(newIndex);
+                  navigate(`/media/${activeMediaList[newIndex].id}`, {
+                    state: { backgroundLocation },
+                    replace: true,
+                  });
                 }
               : undefined
           }

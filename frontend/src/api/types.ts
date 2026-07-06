@@ -28,6 +28,7 @@ export interface MediaItemDetail {
 
   thumb_path: string | null;
   preview_path: string | null;
+  proxy_path: string | null;
 
   date_taken: string | null;
   date_modified: string | null;
@@ -174,4 +175,3 @@ export interface TagWithCount {
   source: string;
   media_count: number;
 }
-

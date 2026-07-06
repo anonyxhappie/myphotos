@@ -32,6 +32,8 @@ Why shard by hash prefix?
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +66,7 @@ class ThumbnailResult:
     sha256: str
     thumb_rel_path: Optional[str] = None    # relative to CACHE_DIR
     preview_rel_path: Optional[str] = None  # relative to CACHE_DIR
+    proxy_rel_path: Optional[str] = None     # relative to CACHE_DIR
     phash: Optional[str] = None
     error: Optional[str] = None
 
@@ -102,6 +105,58 @@ def _extract_video_frame(video_path: str | Path) -> Optional[Image.Image]:
     except Exception as exc:
         logger.warning("Error extracting video frame from %s: %s", video_path, exc)
     return None
+
+
+def _video_proxy_path(sha256: str) -> Path:
+    out_dir = _shard_dir(settings.PREVIEW_DIR, sha256)
+    return out_dir / f"{sha256}.mp4"
+
+
+def _generate_video_proxy(original_path: str | Path, sha256: str) -> Optional[str]:
+    """Generate a browser-playable MP4 proxy for a video file."""
+    out_path = _video_proxy_path(sha256)
+    if out_path.exists():
+        return str(out_path.relative_to(settings.CACHE_DIR))
+
+    if shutil.which("ffmpeg") is None:
+        logger.info("ffmpeg not available — skipping MP4 proxy generation for %s", original_path)
+        return None
+
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(original_path),
+            "-map",
+            "0:v:0?",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-profile:v",
+            "baseline",
+            "-level",
+            "3.0",
+            "-movflags",
+            "+faststart",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            str(out_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.warning("MP4 proxy generation failed for %s: %s", original_path, result.stderr.strip())
+            out_path.unlink(missing_ok=True)
+            return None
+        return str(out_path.relative_to(settings.CACHE_DIR))
+    except Exception as exc:
+        logger.warning("MP4 proxy generation failed for %s: %s", original_path, exc)
+        return None
 
 
 def generate_thumbnail(original_path: str | Path, sha256: str) -> Optional[str]:
@@ -223,6 +278,8 @@ def _generate_single(original_path: str, sha256: str) -> ThumbnailResult:
     try:
         result.thumb_rel_path = generate_thumbnail(original_path, sha256)
         result.preview_rel_path = generate_preview(original_path, sha256)
+        if Path(original_path).suffix.lower() in settings.SUPPORTED_VIDEO_EXTENSIONS:
+            result.proxy_rel_path = _generate_video_proxy(original_path, sha256)
         
         # Compute pHash concurrently inside the thread pool
         from backend.services.scanner import compute_phash

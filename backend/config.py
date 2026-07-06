@@ -89,8 +89,9 @@ class Settings:
         self.PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
     def setup_rotating_logging(self) -> None:
-        """Configure rotating file logging for the application."""
+        """Configure rotating file logging and console logging for the application."""
         import logging
+        import sys
         from logging.handlers import RotatingFileHandler
 
         log_dir = self.PROJECT_ROOT / "data"
@@ -106,11 +107,15 @@ class Settings:
         )
         file_handler.setLevel(logging.INFO)
 
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+
         # Log format
         formatter = logging.Formatter(
             "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"
         )
         file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
 
         # Get root logger and add handler
         root_logger = logging.getLogger()
@@ -118,9 +123,15 @@ class Settings:
         # Avoid duplicate handlers if already configured
         if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
             root_logger.addHandler(file_handler)
+        if not any(isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) is sys.stdout for h in root_logger.handlers):
+            root_logger.addHandler(console_handler)
 
         if root_logger.level > logging.INFO or root_logger.level == logging.NOTSET:
             root_logger.setLevel(logging.INFO)
+
+        # Ensure common framework loggers propagate to root so they appear in console too.
+        for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+            logging.getLogger(name).propagate = True
 
 
 settings = Settings()

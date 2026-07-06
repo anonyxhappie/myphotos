@@ -56,7 +56,7 @@ echo "-> Starting Redis Server..."
 redis-server --daemonize yes
 
 echo "-> Starting FastAPI Backend (Port 8000)..."
-uvicorn backend.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
+uvicorn backend.main:app --host 127.0.0.1 --port 8000 2>&1 | tee backend.log &
 
 # Wait for backend to start up and bind to port 8000
 echo "Waiting for backend to start on port 8000..."
@@ -77,12 +77,12 @@ fi
 echo "FastAPI Backend is up and running!"
 
 echo "-> Starting Celery Background Worker..."
-celery -A backend.tasks worker --loglevel=info > celery.log 2>&1 &
+celery -A backend.tasks worker --loglevel=info 2>&1 | tee celery.log &
 sleep 1
 
 echo "-> Starting Vite Frontend (Port 5173)..."
 cd frontend
-npm run dev > frontend.log 2>&1 &
+npm run dev 2>&1 | tee frontend.log &
 cd ..
 
 # Wait for frontend to start up and bind to port 5173

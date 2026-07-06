@@ -258,6 +258,8 @@ export default function Timeline({
   const [isDragging, setIsDragging] = useState(false);
   const [scrollPercent, setScrollPercent] = useState(0);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const loadMoreTimeoutRef = useRef<number | null>(null);
+  const lastFetchTimeRef = useRef(0);
   const [zoomLevel, setZoomLevel] = useState<number>(() => {
     const saved = localStorage.getItem('timeline_zoom');
     if (saved) {
@@ -271,9 +273,6 @@ export default function Timeline({
     setZoomLevel(level);
     localStorage.setItem('timeline_zoom', String(level));
   }, []);
-
-  const loadMoreTimeoutRef = useRef<number | null>(null);
-  const lastFetchTimeRef = useRef(0);
   
   const [timelineMetadata, setTimelineMetadata] = useState<TimelineMetadataResponse | null>(null);
 
@@ -561,19 +560,19 @@ export default function Timeline({
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
     if (isDraggingRef.current || !timelineMetadata || timelineMetadata.total_count === 0) return;
-    
+
     const scrollTop = e.currentTarget.scrollTop;
     const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 1000;
     const zoomScale = zoomLevel === 3 ? 0.75 : zoomLevel === 2 ? 0.55 : zoomLevel === 1 ? 0.38 : 1.0;
     const rowHeight = ((windowWidth < 640 ? 112 : windowWidth < 960 ? 150 : 184) + (windowWidth < 640 ? 2 : 4)) * zoomScale;
-    const effectiveRowHeight = rowHeight + 10; 
+    const effectiveRowHeight = rowHeight + 10;
     const scrolledRows = scrollTop / effectiveRowHeight;
     const itemsPerRow = windowWidth / (rowHeight * 1.5);
     const scrolledItemsLocal = Math.floor(scrolledRows * itemsPerRow);
-    
+
     const currentGlobalIndex = loadedChunkGlobalOffset + scrolledItemsLocal;
     const percent = Math.min(1, Math.max(0, currentGlobalIndex / timelineMetadata.total_count));
-    
+
     setScrollPercent(percent);
   }, [loadedChunkGlobalOffset, timelineMetadata, zoomLevel]);
 
@@ -767,6 +766,58 @@ export default function Timeline({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Show zoom/grouping tools even when header is hidden (e.g. album/folder views) */}
+      {hideHeader && items.length > 0 && (
+        <div className="timeline-toolbar" style={{ justifyContent: 'flex-end' }}>
+          <div className="flex items-center gap-3">
+            {/* Zoom Control */}
+            <div className="zoom-control" aria-label="Zoom photos">
+              <button
+                onClick={() => changeZoom(Math.max(1, zoomLevel - 1))}
+                disabled={zoomLevel === 1}
+                title="Zoom out"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              <div className="zoom-indicator">
+                {[1, 2, 3, 4].map((level) => (
+                  <span 
+                    key={level} 
+                    className={`zoom-dot ${zoomLevel === level ? 'is-active' : ''}`}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={() => changeZoom(Math.min(4, zoomLevel + 1))}
+                disabled={zoomLevel === 4}
+                title="Zoom in"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Grouping Control */}
+            <div className="grouping-control" aria-label="Group photos by date range">
+              {(['day', 'week', 'month', 'year'] as GroupingMode[]).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setGrouping(mode)}
+                  className={grouping === mode ? 'is-active' : ''}
+                  aria-pressed={grouping === mode}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

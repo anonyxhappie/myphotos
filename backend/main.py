@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +46,7 @@ from backend.schemas import (
     TagWithCount,
     TimelineMetadataResponse,
 )
+from backend.services.thumbnails import generate_preview, _generate_video_proxy
 
 logger = logging.getLogger(__name__)
 settings.setup_rotating_logging()
@@ -120,6 +122,22 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def log_requests(request, call_next):
+    """Log API calls to both console and file via the root logger."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "%s %s -> %s (%.1fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Startup: ensure tables exist
 # ---------------------------------------------------------------------------
@@ -138,8 +156,12 @@ def _on_startup() -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE media_items ADD COLUMN trashed_at DATETIME"))
             logger.info("Migrated: added trashed_at column to media_items")
+        if "proxy_path" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE media_items ADD COLUMN proxy_path TEXT"))
+            logger.info("Migrated: added proxy_path column to media_items")
     except Exception as e:
-        logger.warning("Migration check for trashed_at failed (may already exist): %s", e)
+        logger.warning("Migration check for media_items columns failed (may already exist): %s", e)
 
     logger.info("MyPhotos API ready — DB at %s", engine.url)
     
@@ -415,6 +437,7 @@ def get_media_detail(media_id: str, db: Session = Depends(get_db)) -> MediaItemD
             c.key: getattr(item, c.key)
             for c in item.__table__.columns
         },
+        proxy_path=item.proxy_path,
         is_online=is_online,
         original_available=original_available,
         volume_label=volume_label,
@@ -580,6 +603,11 @@ def empty_bin(db: Session = Depends(get_db)):
                 (settings.CACHE_DIR / item.preview_path).unlink(missing_ok=True)
             except Exception:
                 pass
+        if item.proxy_path:
+            try:
+                (settings.CACHE_DIR / item.proxy_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
         # Delete original file on disk
         if item.original_path:
@@ -633,6 +661,61 @@ def get_thumbnail(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+@app.get("/api/media/{media_id}/proxy")
+def get_proxy(media_id: str, db: Session = Depends(get_db)) -> FileResponse:
+    """Serve the browser-playable MP4 proxy for a media item."""
+    item = db.get(MediaItem, media_id)
+    if not item:
+        raise HTTPException(404, "Media item not found")
+    if not item.proxy_path:
+        raise HTTPException(404, "Proxy not generated yet")
+
+    full_path = settings.CACHE_DIR / item.proxy_path
+    if not full_path.exists():
+        raise HTTPException(404, "Proxy file missing from cache")
+
+    return FileResponse(
+        str(full_path),
+        media_type="video/mp4",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@app.post("/api/media/{media_id}/prepare-video")
+def prepare_video_assets(media_id: str, db: Session = Depends(get_db)) -> dict:
+    """Generate missing video proxy/preview assets on demand."""
+    item = db.get(MediaItem, media_id)
+    if not item:
+        raise HTTPException(404, "Media item not found")
+    if not item.mime_type or not item.mime_type.startswith("video/"):
+        raise HTTPException(400, "Media item is not a video")
+
+    if not Path(item.original_path).exists():
+        raise HTTPException(404, "Original file is currently unavailable")
+
+    updated = False
+    if not item.preview_path:
+        preview_path = generate_preview(item.original_path, item.sha256)
+        if preview_path:
+            item.preview_path = preview_path
+            updated = True
+
+    if not item.proxy_path:
+        proxy_path = _generate_video_proxy(item.original_path, item.sha256)
+        if proxy_path:
+            item.proxy_path = proxy_path
+            updated = True
+
+    if updated:
+        db.commit()
+
+    return {
+        "status": "success",
+        "preview_path": item.preview_path,
+        "proxy_path": item.proxy_path,
+    }
 
 
 @app.get("/api/media/{media_id}/preview")
@@ -1423,6 +1506,11 @@ def remove_synced_directory(id: str, db: Session = Depends(get_db)):
                 (settings.CACHE_DIR / item.preview_path).unlink(missing_ok=True)
             except Exception:
                 pass
+        if item.proxy_path:
+            try:
+                (settings.CACHE_DIR / item.proxy_path).unlink(missing_ok=True)
+            except Exception:
+                pass
         db.delete(item)
 
     sd_path = sd.path
@@ -2009,6 +2097,9 @@ def generate_missing_thumbnails():
                             db_updated = True
                         if tr.preview_rel_path:
                             item.preview_path = tr.preview_rel_path
+                            db_updated = True
+                        if tr.proxy_rel_path:
+                            item.proxy_path = tr.proxy_rel_path
                             db_updated = True
                         if not item.phash and tr.phash:
                             item.phash = tr.phash

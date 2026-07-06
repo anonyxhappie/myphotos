@@ -67,6 +67,12 @@ export async function fetchMediaDetail(id: string): Promise<MediaItemDetail> {
   return fetchJson<MediaItemDetail>(`${BASE}/media/${id}`);
 }
 
+export async function prepareVideoAssets(id: string): Promise<{ status: string; preview_path: string | null; proxy_path: string | null }> {
+  return fetchJson<{ status: string; preview_path: string | null; proxy_path: string | null }>(`${BASE}/media/${id}/prepare-video`, {
+    method: 'POST',
+  });
+}
+
 // ─── URL builders (no fetch, just returns the URL) ──────────────
 
 export function getThumbUrl(id: string): string {
@@ -75,6 +81,10 @@ export function getThumbUrl(id: string): string {
 
 export function getPreviewUrl(id: string): string {
   return `${BASE}/media/${id}/preview?v=2`;
+}
+
+export function getProxyUrl(id: string): string {
+  return `${BASE}/media/${id}/proxy?v=2`;
 }
 
 export function getOriginalUrl(id: string): string {
