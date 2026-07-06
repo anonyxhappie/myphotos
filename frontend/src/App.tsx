@@ -209,17 +209,28 @@ export default function App() {
   }, [activeMediaList, selectedMediaIndex, refreshTotalCount]);
 
   const handleScanStarted = useCallback((taskId: string, path: string, mode: 'scan' | 'takeout') => {
-    setActiveScans((prev) => [...prev, { taskId, path, mode }]);
-    setScanProgress((prev) => ({
-      ...prev,
-      [taskId]: {
-        task_id: taskId,
-        status: 'pending',
-        path,
-        mode,
-        result: null,
-      },
-    }));
+    // Prevent duplicate scans for the same path that are already active
+    setScanProgress((prev) => {
+      const existing = Object.values(prev).find(
+        (s) => s.path === path && (s.status === 'pending' || s.status === 'running' || s.status === 'pausing') && s.task_id !== taskId
+      );
+      if (existing) return prev; // Already have an active scan for this path
+      return {
+        ...prev,
+        [taskId]: {
+          task_id: taskId,
+          status: 'pending',
+          path,
+          mode,
+          result: null,
+        },
+      };
+    });
+    setActiveScans((prev) => {
+      // Don't add duplicate taskId entries
+      if (prev.some((s) => s.taskId === taskId)) return prev;
+      return [...prev, { taskId, path, mode }];
+    });
   }, []);
 
   const scheduleGalleryRefresh = useCallback(() => {
@@ -377,7 +388,6 @@ export default function App() {
           onMenuClick={() => setIsSidebarOpen(true)}
           onScanClick={() => setShowScan(true)}
           onSearch={handleSearch}
-          onScanStarted={handleScanStarted}
           searchQuery={activeSearchQuery}
         />
 

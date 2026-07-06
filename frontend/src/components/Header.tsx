@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { triggerMLPipeline } from '../api/client';
 
 interface HeaderProps {
   onMenuClick: () => void;
   onScanClick: () => void;
   onSearch: (query: string) => void;
-  onScanStarted?: (taskId: string, path: string, mode: 'scan' | 'takeout') => void;
   searchQuery?: string;
 }
 
@@ -22,11 +20,10 @@ function BrandMark() {
   );
 }
 
-export default function Header({ onMenuClick, onScanClick, onSearch, onScanStarted, searchQuery = '' }: HeaderProps) {
+export default function Header({ onMenuClick, onScanClick, onSearch, searchQuery = '' }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [inputValue, setInputValue] = useState('');
-  const [isIndexing, setIsIndexing] = useState(false);
 
   useEffect(() => {
     setInputValue(searchQuery);
@@ -36,19 +33,6 @@ export default function Header({ onMenuClick, onScanClick, onSearch, onScanStart
     onSearch(inputValue.trim());
   };
 
-  const handleStartML = async () => {
-    setIsIndexing(true);
-    try {
-      const res = await triggerMLPipeline();
-      if (res.task_id && onScanStarted) {
-        onScanStarted(res.task_id, 'AI Media Analysis', 'scan');
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setTimeout(() => setIsIndexing(false), 1200);
-    }
-  };
 
   const clearSearch = () => {
     setInputValue('');
@@ -112,20 +96,6 @@ export default function Header({ onMenuClick, onScanClick, onSearch, onScanStart
       <div className="header-actions">
         {location.pathname !== '/settings' && (
           <>
-            <button
-              type="button"
-              className={`icon-button header-desktop-action ${isIndexing ? 'is-busy' : ''}`}
-              title="Refresh smart search index"
-              aria-label="Refresh smart search index"
-              onClick={handleStartML}
-              disabled={isIndexing}
-            >
-              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M12 3a9 9 0 1 0 8.5 6" />
-                <polyline points="20 3 20 9 14 9" />
-                <path d="M9.5 9.5 12 7l2.5 2.5L12 12z" />
-              </svg>
-            </button>
 
             <button type="button" className="add-photos-button" onClick={onScanClick} aria-label="Add photos">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

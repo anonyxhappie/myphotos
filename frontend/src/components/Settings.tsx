@@ -130,6 +130,14 @@ export default function Settings({
     [scanProgress],
   );
 
+  const hasActiveScan = useCallback(
+    (path: string) => {
+      const scan = findScanForPath(path);
+      return scan && (scan.status === 'pending' || scan.status === 'running' || scan.status === 'pausing');
+    },
+    [findScanForPath],
+  );
+
   const handleScanAction = async (
     taskId: string,
     action: 'pause' | 'resume' | 'retry' | 'delete',
@@ -178,6 +186,11 @@ export default function Settings({
       const { path } = await selectFolder();
       if (!path) return; // user cancelled
 
+      if (hasActiveScan(path)) {
+        void dialog.alert('A scan is already running for this directory.');
+        return;
+      }
+
       const result = await addSyncedDirectory(path);
       if (result.task_id && onScanStarted) {
         onScanStarted(result.task_id, path, 'scan');
@@ -205,10 +218,18 @@ export default function Settings({
     if (!(await dialog.confirm('Start a background scan for all monitored directories?'))) return;
     try {
       const results = await resyncAll();
+      let skipped = 0;
       for (const res of results) {
         if (res.task_id && onScanStarted) {
+          if (hasActiveScan(res.path || 'directory')) {
+            skipped++;
+            continue;
+          }
           onScanStarted(res.task_id, res.path || 'directory', 'scan');
         }
+      }
+      if (skipped > 0) {
+        void dialog.alert(`${skipped} director${skipped === 1 ? 'y was' : 'ies were'} already being scanned and skipped.`);
       }
       void loadAuditLogs();
     } catch (e) {
@@ -217,6 +238,10 @@ export default function Settings({
   };
 
   const handleRetrainML = async () => {
+    if (hasActiveScan('AI Media Analysis')) {
+      void dialog.alert('AI Media Analysis is already running.');
+      return;
+    }
     if (!(await dialog.confirm('This will reset AI embeddings and faces, then re-process all media. This might take a while. Continue?'))) return;
     try {
       const res = await retrainML();
@@ -230,6 +255,10 @@ export default function Settings({
   };
 
   const handleRetrainFaces = async () => {
+    if (hasActiveScan('Face Detection')) {
+      void dialog.alert('Face Detection is already running.');
+      return;
+    }
     if (!(await dialog.confirm('This will reset and re-detect faces for all media. Continue?'))) return;
     try {
       const res = await retrainFaces();
