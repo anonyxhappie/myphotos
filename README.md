@@ -135,7 +135,7 @@ myphotos/
 
 ## Data model
 
-The central `MediaItem` model records file identity, paths, media metadata, EXIF/GPS information, processing state, and relationships to albums, tags, people, and detected faces. Volumes represent physical storage, while synced directories represent watched filesystem roots. An audit log records application actions. fileciteturn8file0L2-L2
+The central `MediaItem` model records file identity, paths, media metadata, EXIF/GPS information, processing state, and relationships to albums, tags, people, and detected faces. Volumes represent physical storage, while synced directories represent watched filesystem roots. An audit log records application actions.
 
 ## Project status
 
